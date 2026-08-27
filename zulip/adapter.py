@@ -50,6 +50,17 @@ from .audit_logger import AuditLogger
 
 logger = logging.getLogger(__name__)
 
+
+def _getenv(name: str, default: str = "") -> str:
+    """Read profile-scoped secrets when hosted by a multiplexed Hermes gateway."""
+    try:
+        from agent.secret_scope import get_secret
+
+        value = get_secret(name, default)
+    except (ImportError, RuntimeError):
+        value = os.getenv(name, default)
+    return default if value is None else value
+
 # Max input string length to prevent DoS via huge query strings
 _MAX_INPUT_LENGTH = 10000
 _MAX_JSON_OVERRIDES_BYTES = 10240  # 10KB max for ZULIP_STREAM_OVERRIDES
@@ -281,7 +292,7 @@ def _resolve_streams_filter() -> set[str] | None:
     Returns None if all streams are allowed (default), or a set of
     lowercase stream names to monitor.
     """
-    raw = os.getenv("ZULIP_STREAMS", "").strip()
+    raw = _getenv("ZULIP_STREAMS").strip()
     if not raw or raw == "*":
         return None
     return {s.strip().lower() for s in raw.split(",") if s.strip()}
@@ -449,7 +460,7 @@ def _topic_sessions_enabled() -> bool:
     This is opt-in because turning it on splits an existing stream's history
     into per-topic sessions, which changes what an agent remembers.
     """
-    return os.getenv("ZULIP_TOPIC_SESSIONS", "").strip().lower() in ("true", "1", "yes", "on")
+    return _getenv("ZULIP_TOPIC_SESSIONS").strip().lower() in ("true", "1", "yes", "on")
 
 
 def _safe_delete_temp_file(file_path: str) -> None:
@@ -486,9 +497,12 @@ class ZulipAdapter(BasePlatformAdapter):
         super().__init__(config, Platform("zulip"))
         extra = config.extra or {}
 
-        self.api_key = os.getenv("ZULIP_API_KEY") or extra.get("api_key", "")
-        self.email = os.getenv("ZULIP_EMAIL") or extra.get("email", "")
-        self.site = os.getenv("ZULIP_SITE") or extra.get("site", "")
+        self.api_key = _getenv("ZULIP_API_KEY") or extra.get("api_key", "")
+        # Standard credential attribute used by Hermes's multiplex collision
+        # guard; prevents two profiles from polling the same Zulip bot queue.
+        self.api_token = self.api_key
+        self.email = _getenv("ZULIP_EMAIL") or extra.get("email", "")
+        self.site = _getenv("ZULIP_SITE") or extra.get("site", "")
         # Populated on connect. Zulip renders mentions from the display name,
         # not the email local-part, so mention matching needs it.
         self.bot_full_name = ""
@@ -1654,17 +1668,17 @@ def validate_config(config) -> bool:
     """Validate that required credentials are present."""
     extra = getattr(config, "extra", {}) or {}
     return bool(
-        (os.getenv("ZULIP_API_KEY") or extra.get("api_key"))
-        and (os.getenv("ZULIP_EMAIL") or extra.get("email"))
-        and (os.getenv("ZULIP_SITE") or extra.get("site"))
+        (_getenv("ZULIP_API_KEY") or extra.get("api_key"))
+        and (_getenv("ZULIP_EMAIL") or extra.get("email"))
+        and (_getenv("ZULIP_SITE") or extra.get("site"))
     )
 
 
 def _env_enablement() -> dict | None:
     """Seed PlatformConfig.extra from environment variables."""
-    key = os.getenv("ZULIP_API_KEY", "").strip()
-    email = os.getenv("ZULIP_EMAIL", "").strip()
-    site = os.getenv("ZULIP_SITE", "").strip()
+    key = _getenv("ZULIP_API_KEY").strip()
+    email = _getenv("ZULIP_EMAIL").strip()
+    site = _getenv("ZULIP_SITE").strip()
     if not (key and email and site):
         return None
 

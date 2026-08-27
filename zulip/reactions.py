@@ -51,17 +51,26 @@ class ReactionConfig:
         """Build config from environment variables."""
         import os
 
+        def getenv(name: str, default: str) -> str:
+            try:
+                from agent.secret_scope import get_secret
+
+                value = get_secret(name, default)
+            except (ImportError, RuntimeError):
+                value = os.getenv(name, default)
+            return default if value is None else value
+
         def truthy(val: str) -> bool:
             return val.lower() not in ("false", "0", "", "no", "off")
 
-        enabled = truthy(os.getenv("ZULIP_REACTIONS_ENABLED", "true"))
-        clear = truthy(os.getenv("ZULIP_REACTION_CLEAR_ON_FINISH", "true"))
+        enabled = truthy(getenv("ZULIP_REACTIONS_ENABLED", "true"))
+        clear = truthy(getenv("ZULIP_REACTION_CLEAR_ON_FINISH", "true"))
         return cls(
             enabled=enabled,
             clear_on_finish=clear,
-            on_start=os.getenv("ZULIP_REACTION_START", DEFAULT_START),
-            on_success=os.getenv("ZULIP_REACTION_SUCCESS", DEFAULT_SUCCESS),
-            on_error=os.getenv("ZULIP_REACTION_ERROR", DEFAULT_ERROR),
+            on_start=getenv("ZULIP_REACTION_START", DEFAULT_START),
+            on_success=getenv("ZULIP_REACTION_SUCCESS", DEFAULT_SUCCESS),
+            on_error=getenv("ZULIP_REACTION_ERROR", DEFAULT_ERROR),
         )
 
 
