@@ -243,6 +243,9 @@ DEFAULT_SEND_TIMEOUT = 90.0
 # the API confirms the message was sent, so the response is visible in the UI
 # before the typing indicator stops and the success reaction appears.
 DEFAULT_TYPING_DELAY = 2.0
+# Zulip typing presence expires quickly. Refresh it while an agent turn is
+# running so long MCP/browser calls do not look like a stalled bot.
+_TYPING_HEARTBEAT_SECONDS = 5.0
 
 
 def _resolve_chunk_config() -> tuple[int, str]:
@@ -635,9 +638,58 @@ class ZulipAdapter(BasePlatformAdapter):
             raise ValueError(f"message_id exceeds maximum safe value: {message_id}")
         return mid
 
-    async def _stop_typing(self, typing_params: Optional[dict]) -> None:
-        """Stop typing indicator if it was started. Safe to call multiple times."""
+    def _start_typing_heartbeat(
+        self, typing_params: Optional[dict]
+    ) -> Optional[asyncio.Task]:
+        """Keep Zulip's expiring typing presence alive for one agent turn."""
         if typing_params is None:
+            return None
+        params = dict(typing_params)
+        stop_event = asyncio.Event()
+
+        async def heartbeat() -> None:
+            try:
+                while True:
+                    try:
+                        await self._sdk_call(
+                            self.client.set_typing_status,
+                            params,
+                            timeout=self._send_timeout,
+                        )
+                    except Exception:
+                        pass  # typing remains best-effort
+                    try:
+                        await asyncio.wait_for(
+                            stop_event.wait(), timeout=_TYPING_HEARTBEAT_SECONDS
+                        )
+                        return
+                    except asyncio.TimeoutError:
+                        pass
+            except asyncio.CancelledError:
+                raise
+
+        task = asyncio.create_task(heartbeat())
+        task._zulip_stop_event = stop_event  # type: ignore[attr-defined]
+        return task
+
+    async def _stop_typing(
+        self,
+        typing_params: Optional[dict],
+        heartbeat_task: Optional[asyncio.Task] = None,
+    ) -> None:
+        """Stop typing indicator if it was started. Safe to call multiple times."""
+        if heartbeat_task is not None:
+            stop_event = getattr(heartbeat_task, "_zulip_stop_event", None)
+            if stop_event is not None:
+                stop_event.set()
+            else:
+                heartbeat_task.cancel()
+        if typing_params is None:
+            if heartbeat_task is not None:
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
             return
         params = dict(typing_params)
         params["op"] = "stop"
@@ -649,6 +701,11 @@ class ZulipAdapter(BasePlatformAdapter):
             )
         except Exception:
             pass
+        if heartbeat_task is not None:
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     async def _mark_read(self, message_id: Any) -> None:
         """Mark a message as read. Best-effort."""
@@ -1095,15 +1152,7 @@ class ZulipAdapter(BasePlatformAdapter):
                     "topic": message.get("subject", ""),
                 }
 
-        if typing_params:
-            try:
-                await self._sdk_call(
-                    self.client.set_typing_status,
-                    typing_params,
-                    timeout=self._send_timeout,
-                )
-            except Exception:
-                pass  # typing is best-effort
+        typing_task = self._start_typing_heartbeat(typing_params)
 
         # --- Command interception (before AI dispatch) ---
         if is_command(content):
@@ -1151,7 +1200,7 @@ class ZulipAdapter(BasePlatformAdapter):
                 except Exception as e:
                     logger.warning("command reply failed: %s", mask_pii(str(e)))
                 # Clean up: stop typing, mark as read
-                await self._stop_typing(typing_params)
+                await self._stop_typing(typing_params, typing_task)
                 await self._mark_read(message_id)
                 return
 
@@ -1191,7 +1240,7 @@ class ZulipAdapter(BasePlatformAdapter):
                     logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
 
                 # Clean up: stop typing, mark as read
-                await self._stop_typing(typing_params)
+                await self._stop_typing(typing_params, typing_task)
                 await self._mark_read(message_id)
                 logger.info("zulip DM blocked [policy=%s sender=%s]", self._policy.mode, mask_pii(sender_email))
                 return
@@ -1274,7 +1323,7 @@ class ZulipAdapter(BasePlatformAdapter):
             await self.handle_message(event)
         except Exception:
             await reactions.error()
-            await self._stop_typing(typing_params)
+            await self._stop_typing(typing_params, typing_task)
             raise
         finally:
             await self._mark_read(message_id)
@@ -1284,7 +1333,7 @@ class ZulipAdapter(BasePlatformAdapter):
         # before the typing indicator stops and the success reaction appears.
         if self._typing_delay > 0:
             await asyncio.sleep(self._typing_delay)
-        await self._stop_typing(typing_params)
+        await self._stop_typing(typing_params, typing_task)
         await reactions.success()
 
     async def resolve_topic(self, stream_id: int, topic: str) -> dict[str, Any]:

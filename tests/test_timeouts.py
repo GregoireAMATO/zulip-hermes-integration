@@ -8,7 +8,8 @@ Verifies that:
 
 import asyncio
 import os
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from zulip.adapter import _resolve_timeouts, ZulipAdapter
@@ -165,3 +166,30 @@ class TestSdkCallTimeout:
 
         log_msg = " ".join(r.message for r in caplog.records)
         assert "my_slow_function" in log_msg
+@pytest.mark.asyncio
+async def test_typing_heartbeat_refreshes_until_explicit_stop(monkeypatch):
+    from zulip import adapter as module
+    from zulip.adapter import ZulipAdapter
+
+    monkeypatch.setattr(module, "_TYPING_HEARTBEAT_SECONDS", 0.01)
+    adapter = ZulipAdapter.__new__(ZulipAdapter)
+    adapter.client = SimpleNamespace(set_typing_status=lambda params: None)
+    adapter._send_timeout = 1
+    adapter._sdk_call = AsyncMock(return_value={"result": "success"})
+    params = {
+        "op": "start",
+        "type": "stream",
+        "stream_id": 5,
+        "topic": "Tara-Lee",
+    }
+
+    task = adapter._start_typing_heartbeat(params)
+    await asyncio.sleep(0.035)
+    await adapter._stop_typing(params, task)
+
+    payloads = [call.args[1] for call in adapter._sdk_call.await_args_list]
+    assert len([p for p in payloads if p["op"] == "start"]) >= 2
+    assert payloads[-1]["op"] == "stop"
+    calls_after_stop = adapter._sdk_call.await_count
+    await asyncio.sleep(0.025)
+    assert adapter._sdk_call.await_count == calls_after_stop
