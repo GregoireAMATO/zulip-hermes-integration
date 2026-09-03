@@ -84,6 +84,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Virtual topic hierarchy**: `@thread split`, `tree`, `parent`, `children`, `root`, `status`, `close`, `overview`, and `sync` organize normal flat Zulip topics as persistent parent/child trees without an extra LLM call. Splits are idempotent, seed the child with the latest human context, work in `oncall` mode, and remain scoped by bot account and stream.
+- **Agent-assisted topic splitting**: a strict assistant-output protocol supports `off`, human-confirmed `suggest` (default), and `auto` modes from `config.yaml`. Automatic children carry goals and one-time session context, enforce depth/topic/count limits, use native Zulip links, deduplicate retries, and feed an editable debounced rollup in the root topic.
 - **Persistent Event Queue**: `ZulipQueueManager` persists `queue_id` + `last_event_id` to disk, survives gateway restarts, handles `BAD_EVENT_QUEUE_ID` gracefully
 - **Message Deduplication**: `ZulipDedupeStore` prevents duplicate processing with 5-minute TTL and debounced disk persistence
 - **Text Processing**: `strip_html_to_text()`, `chunk_text()` (length/newline modes), `extract_topic_directive()` for inline topic changes

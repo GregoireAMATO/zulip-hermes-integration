@@ -9,6 +9,8 @@ Covers two bugs that made `oncall` mode unusable:
    message was left showing "typing..." forever.
 """
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -211,10 +213,17 @@ class TestAcknowledgementOrdering:
     async def test_accepted_message_does_send_typing(self, adapter, monkeypatch):
         monkeypatch.setenv("ZULIP_CHATMODE", "onmessage")
         monkeypatch.delenv("ZULIP_STREAM_OVERRIDES", raising=False)
+        adapter._typing_delay = 0
         await adapter._handle_message(self._msg("hello"))
         adapter.handle_message.assert_called_once()
+        event = adapter.handle_message.await_args.args[0]
+        await adapter.on_processing_start(event)
+        await asyncio.sleep(0)
         assert self._typing_calls(adapter), (
             "an accepted message should still show a typing indicator"
+        )
+        await adapter.on_processing_complete(
+            event, SimpleNamespace(value="success")
         )
 
 

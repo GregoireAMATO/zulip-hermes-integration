@@ -20,16 +20,24 @@ logger = logging.getLogger(__name__)
 class QueueMetadata:
     """Represents persisted queue state."""
 
-    def __init__(self, queue_id: str, last_event_id: int, registered_at: int = 0):
+    def __init__(
+        self,
+        queue_id: str,
+        last_event_id: int,
+        registered_at: int = 0,
+        max_topic_length: int = 60,
+    ):
         self.queue_id = queue_id
         self.last_event_id = last_event_id
         self.registered_at = registered_at or int(time.time() * 1000)
+        self.max_topic_length = max_topic_length
 
     def to_dict(self) -> dict:
         return {
             "queue_id": self.queue_id,
             "last_event_id": self.last_event_id,
             "registered_at": self.registered_at,
+            "max_topic_length": self.max_topic_length,
         }
 
     @classmethod
@@ -38,6 +46,7 @@ class QueueMetadata:
             queue_id=data["queue_id"],
             last_event_id=data["last_event_id"],
             registered_at=data.get("registered_at", 0),
+            max_topic_length=data.get("max_topic_length", 60),
         )
 
 
@@ -144,6 +153,7 @@ class ZulipQueueManager:
                 metadata = QueueMetadata(
                     queue_id=result["queue_id"],
                     last_event_id=result["last_event_id"],
+                    max_topic_length=result.get("max_topic_length", 60),
                 )
                 self.save(metadata)
                 logger.info(

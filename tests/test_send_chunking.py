@@ -100,6 +100,30 @@ class TestSendChunking:
         assert adapter.client._calls[0]["topic"] == "MetaTopic"
 
     @pytest.mark.asyncio
+    async def test_thread_id_wins_over_newer_cached_topic(self, adapter):
+        adapter._topic_cache["573423"] = "Second Topic"
+
+        result = await adapter.send(
+            "573423",
+            "reply to the first topic",
+            metadata={"thread_id": "First Topic"},
+        )
+
+        assert result.success is True
+        assert adapter.client._calls[0]["topic"] == "First Topic"
+
+    @pytest.mark.asyncio
+    async def test_platform_topic_wins_over_generic_thread_id(self, adapter):
+        result = await adapter.send(
+            "573423",
+            "plain message",
+            metadata={"topic": "Explicit Topic", "thread_id": "Generic Thread"},
+        )
+
+        assert result.success is True
+        assert adapter.client._calls[0]["topic"] == "Explicit Topic"
+
+    @pytest.mark.asyncio
     async def test_dm_ignores_topic_directive(self, adapter):
         result = await adapter.send(
             "dm:42",

@@ -1,6 +1,7 @@
 """Integration tests: full message flow through adapter."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
@@ -64,11 +65,16 @@ class TestFullFlow:
         from zulip.adapter import ZulipAdapter
         a = ZulipAdapter(mock_platform_config)
         a.email = "bot@zulip.com"
+        a._typing_delay = 0
         a.handle_message = AsyncMock()
         return a
 
     @pytest.mark.asyncio
     async def test_message_arrives_and_dispatched(self, adapter):
+        async def start_scheduled_turn(event):
+            await adapter.on_processing_start(event)
+
+        adapter.handle_message.side_effect = start_scheduled_turn
         msg = {
             "id": 42,
             "type": "stream",
@@ -82,10 +88,21 @@ class TestFullFlow:
         }
         await adapter._handle_message(msg)
 
-        # Reaction attempted (best-effort, may fail on mock but called)
-        assert len(adapter.client.calls["add_reaction"]) >= 1
-        # handle_message called
         adapter.handle_message.assert_awaited_once()
+
+        # handle_message() only schedules the gateway task.  Returning from it
+        # must not be interpreted as completion by the Zulip adapter.
+        assert [
+            call["emoji_name"] for call in adapter.client.calls["add_reaction"]
+        ] == ["eyes"]
+
+        event = adapter.handle_message.await_args.args[0]
+        await adapter.on_processing_complete(
+            event, SimpleNamespace(value="success")
+        )
+        assert [
+            call["emoji_name"] for call in adapter.client.calls["add_reaction"]
+        ] == ["eyes", "check_mark"]
 
     @pytest.mark.asyncio
     async def test_chunking_send(self, adapter, monkeypatch):

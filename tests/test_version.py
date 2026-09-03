@@ -20,6 +20,9 @@ class TestVersionInfo:
 
     def test_plugin_files_listed(self):
         assert "adapter.py" in PLUGIN_FILES
+        assert "thread_config.py" in PLUGIN_FILES
+        assert "thread_directives.py" in PLUGIN_FILES
+        assert "thread_hierarchy.py" in PLUGIN_FILES
         assert "version.py" in PLUGIN_FILES
         assert "plugin.yaml" in PLUGIN_FILES
 

@@ -28,6 +28,15 @@ class TestQueueMetadata:
         m = QueueMetadata(queue_id="q1", last_event_id=0)
         assert m.registered_at > 0
 
+    def test_topic_limit_roundtrips_and_old_state_has_safe_default(self):
+        current = QueueMetadata(
+            queue_id="q1", last_event_id=0, max_topic_length=80
+        )
+        assert QueueMetadata.from_dict(current.to_dict()).max_topic_length == 80
+        assert QueueMetadata.from_dict(
+            {"queue_id": "old", "last_event_id": 1}
+        ).max_topic_length == 60
+
 
 @pytest.fixture
 def tmp_data_dir():

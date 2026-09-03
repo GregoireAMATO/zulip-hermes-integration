@@ -177,3 +177,12 @@ class ReactionLifecycle:
             self.client, self.message_id, cfg.on_error, cfg.enabled,
             timeout=self.timeout,
         )
+
+    async def cancel(self) -> None:
+        """Clear the in-progress reaction without claiming success or failure."""
+        cfg = self.config
+        if cfg.clear_on_finish:
+            await remove_reaction(
+                self.client, self.message_id, cfg.on_start, cfg.enabled,
+                timeout=self.timeout,
+            )

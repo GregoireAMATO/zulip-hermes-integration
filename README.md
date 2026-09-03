@@ -47,6 +47,12 @@ gateway:
   platforms:
     zulip:
       enabled: true
+      thread_hierarchy:
+        enabled: true
+        auto_split: suggest  # off | suggest | auto
+        max_depth: 4
+        max_children_per_split: 6
+        rollup_debounce_seconds: 30
 ```
 
 ### 4. Start
@@ -69,6 +75,7 @@ Send a DM or @-mention your bot in a subscribed stream. Done! 🎉
 | Feature | What it does |
 |---------|-------------|
 | 💬 **Streams + DMs** | Talk to the bot in public streams (with topic threading) or private messages |
+| 🌳 **Virtual sub-threads** | Organize flat Zulip topics into navigable parent/child trees, manually or with agent suggestions |
 | 🤔 **"Thinking..." placeholder** | Bot shows it's working, then edits with the final answer. No awkward silence. |
 | 📎 **File uploads** | Send CSVs, PDFs, JSON — the bot downloads and can process them |
 | 🏓 **Admin commands** | Type `/help`, `/status`, `/model`, `/streams`, `/user`, `/pin`, `/unpin` for instant responses (no LLM call needed) |
@@ -93,7 +100,7 @@ Send a DM or @-mention your bot in a subscribed stream. Done! 🎉
 | 🔌 **Pure plugin** | Zero changes to Hermes core. Drop in, enable, done. |
 | 🧩 **Extensible commands** | Add custom bot commands with `@register_command` decorator |
 | 📁 **Sandboxed workspace** | Bot can generate files (reports, JSON, CSV) in a temp workspace with auto-cleanup |
-| 🧪 **CI-tested** | 431 tests, pre-push hooks, GitHub Actions branch protection |
+| 🧪 **CI-tested** | Comprehensive pytest coverage, pre-push hooks, GitHub Actions branch protection |
 
 ---
 
@@ -120,6 +127,49 @@ from zulip.commands import register_command
 def _cmd_ping(args, chat_id, sender_email, sender_name):
     return "🏓 Pong!"
 ```
+
+### Virtual sub-threads
+
+Zulip still stores every entry as a normal, flat topic. The bot persists only
+the parent/child relationships and gives the topics a hierarchical name:
+
+```text
+training
+training / data-augmentation
+training / data-augmentation / perf
+```
+
+In a stream topic, use:
+
+| Command | Result |
+|---------|--------|
+| `@thread split <name>` | Create or reuse a direct child and seed it with the latest human message as context |
+| `@thread tree` | Show the full tree from the current root |
+| `@thread parent` | Show the direct parent |
+| `@thread children` | List direct children |
+| `@thread root` | Show the root topic |
+| `@thread status <state> [summary]` | Set `todo`, `in_progress`, `blocked`, or `done` |
+| `@thread close [summary]` | Mark the current topic done |
+| `@thread overview` | Show links, goals, statuses, and summaries from the root |
+| `@thread sync` | Immediately refresh the consolidated root rollup |
+
+These commands are handled locally without an LLM call. They work in
+`oncall` mode without mentioning the bot, but still obey stream filters,
+group policy, rate limits, and Zulip's server-advertised topic-length limit.
+The hierarchy is stored per bot account under the active Hermes data directory.
+
+The agent can also recognize that one large discussion contains independent
+workstreams. The default `auto_split: suggest` mode posts explicit
+`@thread split ...` proposals for a human to confirm. With `auto_split: auto`,
+the adapter creates the child topics directly, stores a goal and one-time
+context seed for each child, posts native Zulip links in both directions, and
+maintains a debounced progress rollup in the root topic. `off` disables all
+assistant-driven actions while leaving the manual commands available.
+
+Assistant actions use a strict hidden JSON protocol parsed only after the full
+answer is generated. The control block is never sent to Zulip, is ignored in
+DMs, and is bounded by the configured depth and child limits. The mode is a
+normal `config.yaml` setting; no behavioral environment variable is required.
 
 ---
 
