@@ -25,6 +25,9 @@ class MessageSource:
     # Session-scoping discriminator on the real SessionSource. Only set by the
     # adapter when ZULIP_TOPIC_SESSIONS is enabled.
     thread_id: str = ""
+    # Triggering platform message id (real SessionSource.message_id); upstream
+    # Hermes derives HERMES_SESSION_MESSAGE_ID from it.
+    message_id: Optional[str] = None
 
 
 @dataclass
