@@ -2035,6 +2035,7 @@ class ZulipAdapter(BasePlatformAdapter):
                 "chat_type": "stream",
                 "user_id": sender_email,
                 "user_name": sender_full_name,
+                "message_id": str(message_id) if message_id is not None else None,
             }
             if topic and _topic_sessions_enabled():
                 source_kwargs["thread_id"] = topic
@@ -2069,6 +2070,7 @@ class ZulipAdapter(BasePlatformAdapter):
                 chat_type="dm",
                 user_id=sender_email,
                 user_name=sender_full_name,
+                message_id=str(message_id) if message_id is not None else None,
             )
             extra_meta = {"user_id": sender_id, "user_email": sender_email}
 
