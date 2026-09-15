@@ -13,6 +13,8 @@ class MessageType(Enum):
 class SendResult:
     success: bool
     message_id: str = ""
+    error: Optional[str] = None
+    retryable: bool = False
 
 
 @dataclass

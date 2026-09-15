@@ -513,15 +513,15 @@ def _safe_delete_temp_file(file_path: str) -> None:
 class ZulipAdapter(BasePlatformAdapter):
     """Zulip platform adapter for Hermes Gateway."""
 
-    # The adapter does not expose generic progressive reply editing.  Keeping
-    # gateway streaming off also guarantees that assistant-only control blocks
-    # are parsed from the complete final response and never leak as partial
-    # text.  Thread rollups use a dedicated Zulip update helper instead.
+    # This gates assistant streaming, not tool progress (which detects the
+    # edit_message override). Keep complete-response sends for hidden hierarchy
+    # directives: progressive answer edits cannot safely execute their effects.
     SUPPORTS_MESSAGE_EDITING = False
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform("zulip"))
         extra = config.extra or {}
+        self._progress_edit_failures: OrderedDict[tuple[str, str], str] = OrderedDict()
 
         self.api_key = _getenv("ZULIP_API_KEY") or extra.get("api_key", "")
         # Standard credential attribute used by Hermes's multiplex collision
@@ -2459,6 +2459,58 @@ class ZulipAdapter(BasePlatformAdapter):
         if extraction.directives:
             return SendResult(success=True, message_id="")
         return SendResult(success=False, message_id="")
+
+    @property
+    def MAX_MESSAGE_LENGTH(self) -> int:
+        """Expose the same content budget to native progress and sends."""
+        limit, _ = _resolve_chunk_config()
+        return max(1, min(limit, 10000) - len(self._response_prefix))
+
+    async def edit_message(
+        self, chat_id: str, message_id: str, content: str, *,
+        finalize: bool = False, metadata=None,
+    ) -> SendResult:
+        """Update content only, without moving topics or executing directives.
+
+        Failed bubbles are frozen in a bounded cache. ``retryable`` keeps the
+        native progress consumer on that bubble rather than its permanent-error
+        fallback (one new message per tool). Subsequent calls make no API call;
+        final answer delivery through send() remains independent.
+        """
+        key = (str(chat_id), str(message_id))
+
+        def failure(error):
+            self._progress_edit_failures[key] = error
+            self._progress_edit_failures.move_to_end(key)
+            while len(self._progress_edit_failures) > 256:
+                self._progress_edit_failures.popitem(last=False)
+            return SendResult(success=False, message_id=str(message_id),
+                              error=error, retryable=True)
+
+        if key in self._progress_edit_failures:
+            return failure(self._progress_edit_failures[key])
+        try:
+            mid = self._validate_message_id(message_id)
+            _parse_target(chat_id)
+            # Activity edits are not an assistant control channel. Reject
+            # incomplete control blocks as well as complete ones.
+            if "[[zulip" in content:
+                return failure("Control directives are not supported in progress edits")
+            if not content.strip() or len(content) > self.MAX_MESSAGE_LENGTH:
+                return failure("Progress edit is empty or exceeds the message budget")
+            result = await self._sdk_call(
+                self.client.update_message,
+                {"message_id": mid, "content": self._response_prefix + content},
+                timeout=self._send_timeout,
+            )
+            if result.get("result") == "success":
+                return SendResult(success=True, message_id=str(message_id))
+            return failure(str(result.get("msg") or "Zulip rejected progress edit"))
+        except asyncio.CancelledError:
+            failure("Progress edit interrupted")
+            raise
+        except Exception as exc:
+            return failure(type(exc).__name__ + ": progress edit failed")
 
     async def _send_single(
         self,
