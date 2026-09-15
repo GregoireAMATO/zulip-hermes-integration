@@ -1907,6 +1907,50 @@ class ZulipAdapter(BasePlatformAdapter):
                     "topic": message.get("subject", ""),
                 }
 
+        # --- DM policy check (Issue #48) ---
+        if msg_type == "private":
+            sender_email = message.get("sender_email", "")
+            allowed, pairing_code = self._policy.check_dm(sender_email)
+            if not allowed:
+                await reactions.start()
+                typing_task = self._start_typing_heartbeat(typing_params)
+                await self._audit_logger.log_policy_block(
+                    sender_id=sender_email,
+                    reason=f"dm_policy={self._policy.mode}",
+                    kind="dm",
+                )
+                reply = ""
+                if pairing_code:
+                    reply = (
+                        f"👋 Hi! You need to be approved before messaging this bot.\n\n"
+                        f"Your pairing code: **PAIR-{pairing_code}**\n\n"
+                        f"Share this code with your admin to get access."
+                    )
+                elif self._policy.mode == "disabled":
+                    reply = "🚫 DMs to this bot are currently disabled."
+                else:
+                    reply = "🚫 You are not authorized to message this bot."
+
+                try:
+                    await self._sdk_call(
+                        self.client.send_message,
+                        {
+                            "type": "private",
+                            "to": [message.get("sender_id")],
+                            "content": reply,
+                        },
+                        timeout=self._send_timeout,
+                    )
+                except Exception as e:
+                    logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
+
+                # Clean up: stop typing, mark as read
+                await self._stop_typing(typing_params, typing_task)
+                await reactions.success()
+                await self._mark_read(message_id)
+                logger.info("zulip DM blocked [policy=%s sender=%s]", self._policy.mode, mask_pii(sender_email))
+                return
+
         # --- Virtual topic hierarchy commands (before slash commands / AI) ---
         if thread_command is not None:
             await reactions.start()
@@ -1973,50 +2017,6 @@ class ZulipAdapter(BasePlatformAdapter):
                 await self._stop_typing(typing_params, typing_task)
                 await reactions.success()
                 await self._mark_read(message_id)
-                return
-
-        # --- DM policy check (Issue #48) ---
-        if msg_type == "private":
-            sender_email = message.get("sender_email", "")
-            allowed, pairing_code = self._policy.check_dm(sender_email)
-            if not allowed:
-                await reactions.start()
-                typing_task = self._start_typing_heartbeat(typing_params)
-                await self._audit_logger.log_policy_block(
-                    sender_id=sender_email,
-                    reason=f"dm_policy={self._policy.mode}",
-                    kind="dm",
-                )
-                reply = ""
-                if pairing_code:
-                    reply = (
-                        f"👋 Hi! You need to be approved before messaging this bot.\n\n"
-                        f"Your pairing code: **PAIR-{pairing_code}**\n\n"
-                        f"Share this code with your admin to get access."
-                    )
-                elif self._policy.mode == "disabled":
-                    reply = "🚫 DMs to this bot are currently disabled."
-                else:
-                    reply = "🚫 You are not authorized to message this bot."
-
-                try:
-                    await self._sdk_call(
-                        self.client.send_message,
-                        {
-                            "type": "private",
-                            "to": [message.get("sender_id")],
-                            "content": reply,
-                        },
-                        timeout=self._send_timeout,
-                    )
-                except Exception as e:
-                    logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
-
-                # Clean up: stop typing, mark as read
-                await self._stop_typing(typing_params, typing_task)
-                await reactions.success()
-                await self._mark_read(message_id)
-                logger.info("zulip DM blocked [policy=%s sender=%s]", self._policy.mode, mask_pii(sender_email))
                 return
 
         if msg_type == "stream":

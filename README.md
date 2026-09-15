@@ -78,7 +78,7 @@ Send a DM or @-mention your bot in a subscribed stream. Done! 🎉
 | 🌳 **Virtual sub-threads** | Organize flat Zulip topics into navigable parent/child trees, manually or with agent suggestions |
 | 🤔 **"Thinking..." placeholder** | Bot shows it's working, then edits with the final answer. No awkward silence. |
 | 📎 **File uploads** | Send CSVs, PDFs, JSON — the bot downloads and can process them |
-| 🏓 **Admin commands** | Type `/help`, `/status`, `/model`, `/streams`, `/user`, `/pin`, `/unpin` for instant responses (no LLM call needed) |
+| 🏓 **Hermes commands** | Native `/help`, `/commands`, `/status`, `/model` and optional `/verbose` use Hermes routing and permissions |
 
 ### For Admins
 
@@ -104,29 +104,26 @@ Send a DM or @-mention your bot in a subscribed stream. Done! 🎉
 
 ---
 
-## 🏓 Built-in Commands
+## 🏓 Commands
 
-Type these in any stream or DM. They're handled instantly — no LLM call:
+Hermes owns its registered commands, including aliases and disabled commands.
+The plugin forwards them through the normal gateway and permission checks.
 
-| Command | Response |
+| Command | Behavior |
 |---------|----------|
-| `/help` | List all available commands |
-| `/status` | Bot version, repo URL, your email |
-| `/model` | Current model status |
-| `/streams` | List streams (or ask AI for management) |
-| `/user` | Get user info (or ask AI) |
-| `/pin` | Star/pin a message (or ask AI) |
-| `/unpin` | Unstar/unpin a message (or ask AI) |
+| `/help` | Native gateway help; not a personalized permission list |
+| `/commands [page]` | Paginated native commands and profile skills |
+| `/status` | Native Hermes session status |
+| `/model <name>` | Switch the current session model; `--global` explicitly changes the profile default |
+| `/verbose` | Cycle native tool-progress detail when `display.tool_progress_command` is enabled |
+| `/` alone | Point to `/help` and `/commands 1` without an exception |
+| `/streams`, `/user`, `/pin`, `/unpin` | Usage guidance only; these local shortcuts do not perform the named operation |
 
-Add your own:
-
-```python
-from zulip.commands import register_command
-
-@register_command("ping")
-def _cmd_ping(args, chat_id, sender_email, sender_name):
-    return "🏓 Pong!"
-```
+The installed gateway does not apply `/help <filter>` arguments. Use `/help`
+and `/commands [page]`. Available skills depend on the profile and platform;
+the displayed catalogue does not grant execution rights. DM policy applies
+before local commands and `@thread` as well as ordinary messages. Unknown
+commands continue through the gateway's normal handling.
 
 ### Virtual sub-threads
 

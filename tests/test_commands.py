@@ -12,6 +12,19 @@ from zulip.commands import (
 )
 
 
+@pytest.fixture(autouse=True)
+def native_recognition(monkeypatch):
+    """Unit-test the ownership contract; engine integration tests use real registry."""
+    import sys
+    from types import ModuleType
+    native = ModuleType("hermes_cli.commands")
+    native.resolve_command = lambda name: object() if name in {
+        "help", "commands", "status", "model", "verbose", "reset"
+    } else None
+    native.is_gateway_known_command = lambda name: name == "native_plugin"
+    monkeypatch.setitem(sys.modules, "hermes_cli.commands", native)
+
+
 class TestCommandParsing:
     def test_extract_command_basic(self):
         assert _extract_command("/help") == ("help", "")
@@ -75,28 +88,30 @@ class TestCommandRegistration:
 
 
 class TestBuiltInCommands:
-    def test_help_lists_commands(self):
-        result = handle_command("/help", "dm:1", "a@x.com", "Alice")
-        assert result.handled is True
-        assert "Bot Commands:" in result.reply
-        assert "/help" in result.reply
-        assert "/status" in result.reply
-        assert "/model" in result.reply
+    @pytest.mark.parametrize("content", ["/help", "/HELP", "/commands 2", "/status", "/model", "/model test", "/verbose", "/reset"])
+    def test_native_commands_fall_through(self, content):
+        assert not handle_command(content, "dm:1", "a@x.com", "Alice").handled
 
-    def test_status_shows_version(self):
-        result = handle_command("/status", "dm:1", "a@x.com", "Alice")
-        assert result.handled is True
-        assert "Bot Status" in result.reply
+    @pytest.mark.parametrize("content", ["/", "/  ", "  /\t\n"])
+    def test_bare_slash_gives_help(self, content):
+        assert _extract_command(content) == ("", "")
+        result = handle_command(content, "dm:1", "a@x.com", "Alice")
+        assert result.handled and "/help" in result.reply
 
-    def test_model_without_args(self):
-        result = handle_command("/model", "dm:1", "a@x.com", "Alice")
-        assert result.handled is True
-        assert "Current model:" in result.reply
+    @pytest.mark.parametrize("content", ["", "  ", "\n\t"])
+    def test_whitespace(self, content):
+        assert not handle_command(content, "dm:1", "a@x.com", "Alice").handled
 
-    def test_model_with_args(self):
-        result = handle_command("/model gpt4", "dm:1", "a@x.com", "Alice")
-        assert result.handled is True
-        assert "gpt4" in result.reply
+    def test_native_collision_never_runs_local_handler(self, monkeypatch):
+        handler = MagicMock(return_value="wrong")
+        monkeypatch.setitem(_COMMANDS, "verbose", handler)
+        assert not handle_command("/verbose", "dm:1", "a@x.com", "Alice").handled
+        handler.assert_not_called()
+
+    @pytest.mark.parametrize("name", ["streams", "user", "pin", "unpin"])
+    def test_local_commands_remain_guidance(self, name):
+        result = handle_command("/" + name + " 42", "dm:1", "a@x.com", "Alice")
+        assert result.handled and "AI agent" in result.reply
 
 
 class TestCommandErrorHandling:
@@ -119,7 +134,7 @@ class TestAdapterIntegration:
     """Test that adapter properly intercepts commands."""
 
     @pytest.mark.asyncio
-    async def test_command_bypasses_ai_dispatch(self, mock_platform_config, monkeypatch):
+    async def test_command_reaches_gateway(self, mock_platform_config, monkeypatch):
         import zulip.adapter as adapter_module
         from zulip.adapter import ZulipAdapter
         from tests.conftest import MockZulipClient
@@ -149,12 +164,14 @@ class TestAdapterIntegration:
             "content": "/help",
         }
 
+        from unittest.mock import AsyncMock
+        adapter.handle_message = AsyncMock()
         await adapter._handle_message(message)
-
-        # Should have sent a command reply, not dispatched to AI
-        assert len(adapter.client._sent_messages) > 0
-        last_msg = adapter.client._sent_messages[-1]
-        assert "Bot Commands:" in last_msg["content"]
+        adapter.handle_message.assert_awaited_once()
+        event = adapter.handle_message.call_args.args[0]
+        assert event.text == "/help"
+        assert event.source.user_id == "user@test.com"
+        assert event.source.chat_id == "dm:42"
 
     @pytest.mark.asyncio
     async def test_non_command_goes_to_ai(self, mock_platform_config, monkeypatch):
@@ -198,3 +215,43 @@ class TestAdapterIntegration:
 
         await adapter._handle_message(message)
         assert ai_called is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["/help", "/status", "/model test", "/streams", "/", "@thread tree"])
+async def test_dm_policy_precedes_all_commands(content, mock_platform_config, monkeypatch):
+    from unittest.mock import AsyncMock
+    import zulip.adapter as module
+    from tests.conftest import MockZulipClient
+    monkeypatch.setattr(module, "ZULIP_AVAILABLE", True)
+    monkeypatch.setattr(module, "zulip", MagicMock(Client=MockZulipClient))
+    adapter = module.ZulipAdapter(mock_platform_config)
+    adapter._policy = MagicMock(mode="disabled")
+    adapter._policy.check_dm.return_value = (False, None)
+    adapter.handle_message = AsyncMock()
+    adapter._handle_thread_command = AsyncMock()
+    await adapter._handle_message({
+        "id": 124, "type": "private", "sender_id": 42,
+        "sender_email": "user@test.com", "sender_full_name": "User",
+        "content": content,
+    })
+    adapter.handle_message.assert_not_awaited()
+    adapter._handle_thread_command.assert_not_awaited()
+    adapter._policy.check_dm.assert_called_once_with("user@test.com")
+    assert "disabled" in adapter.client._sent_messages[-1]["content"]
+
+
+def test_unavailable_registry_defers_even_local_collision(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "hermes_cli.commands", None)
+    handler = MagicMock()
+    monkeypatch.setitem(_COMMANDS, "streams", handler)
+    assert not handle_command("/streams", "dm:1", "a@x.com", "Alice").handled
+    handler.assert_not_called()
+
+
+def test_native_plugin_collision(monkeypatch):
+    handler = MagicMock()
+    monkeypatch.setitem(_COMMANDS, "native_plugin", handler)
+    assert not handle_command("/native_plugin", "dm:1", "a@x.com", "Alice").handled
+    handler.assert_not_called()

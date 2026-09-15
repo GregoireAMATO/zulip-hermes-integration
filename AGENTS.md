@@ -53,22 +53,20 @@ Every `MessageEvent.metadata` contains:
 
 ---
 
-## 🏓 Admin Commands (You Don't See These)
+## 🏓 Commands
 
-Messages starting with `/` are intercepted **before** they reach you:
+Native Hermes commands (`/help`, `/commands`, `/status`, `/model`, `/verbose`
+and registered aliases) go through gateway routing and access checks before
+reaching the AI. Do not emulate their effects in an assistant reply. A native
+command that is disabled still belongs to the gateway.
 
-| Command | Handled by bot | You see? |
-|---------|---------------|----------|
-| `/help` | ✅ Yes | ❌ No |
-| `/status` | ✅ Yes | ❌ No |
-| `/model` | ✅ Yes | ❌ No |
-| `/streams` | ✅ Yes (delegates to AI) | ❌ No |
-| `/user` | ✅ Yes (delegates to AI) | ❌ No |
-| `/pin` | ✅ Yes (delegates to AI) | ❌ No |
-| `/unpin` | ✅ Yes (delegates to AI) | ❌ No |
-| `/weather` | ❌ No — falls through | ✅ Yes (treat as normal message) |
+The plugin handles `/` alone with a help pointer. Local `/streams`, `/user`,
+`/pin` and `/unpin` replies are usage guidance, not completed actions or an
+automatic delegation to the AI. For a separate natural-language request, use
+the appropriate available tools and report only their actual results.
 
-**Do not silently drop `/` messages.** If it's not one of the commands above, it's a user question for you. The admin commands (`/streams`, `/user`, `/pin`, `/unpin`) delegate to you — if a user asks you to manage streams or pin a message, use the adapter's `star_message()`, `list_streams()`, `get_user_info()` methods.
+DM policy applies before both native and local command handling. Unknown
+commands continue to the gateway; do not silently drop them if delivered to you.
 
 Messages whose entire content is `@thread ...` are also intercepted before
 the AI. They manage bot-side virtual topic hierarchies with `split`, `tree`,

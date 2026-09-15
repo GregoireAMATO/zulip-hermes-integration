@@ -53,6 +53,8 @@ def _extract_command(content: str) -> tuple[str, str] | None:
     stripped = content.strip()
     if stripped.startswith("/"):
         parts = stripped[1:].split(maxsplit=1)
+        if not parts:
+            return "", ""
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
         return cmd, args
@@ -76,6 +78,19 @@ def handle_command(
         return CommandResult(handled=False)
 
     cmd, args = parsed
+    if not cmd:
+        return CommandResult(handled=True, reply="Use `/help` for Hermes help or `/commands 1` for its command catalogue.")
+
+    # Recognition must not use the visible help menu: disabled commands and
+    # aliases still belong to Hermes, whose normal dispatch applies its ACLs.
+    try:
+        from hermes_cli.commands import resolve_command, is_gateway_known_command
+    except ImportError:
+        # Without native recognition, do not risk executing a local collision.
+        return CommandResult(handled=False)
+    if resolve_command(cmd) is not None or is_gateway_known_command(cmd):
+        return CommandResult(handled=False)
+
     handler = _COMMANDS.get(cmd)
     if handler is None:
         return CommandResult(handled=False)
@@ -86,53 +101,6 @@ def handle_command(
     except Exception as e:
         logger.warning("command error [cmd=%s sender=%s]: %s", cmd, mask_pii(sender_email), e)
         return CommandResult(handled=True, reply=f"❌ Error processing /{cmd}. Please try again later.")
-
-
-# ------------------------------------------------------------------
-# Built-in commands
-# ------------------------------------------------------------------
-
-@register_command("help")
-def _cmd_help(
-    args: str, chat_id: str, sender_email: str, sender_name: str
-) -> str:
-    """List available commands."""
-    cmd_list = sorted(_COMMANDS.keys())
-    lines = ["**Bot Commands:**", ""]
-    for name in cmd_list:
-        lines.append(f"• `/{name}`")
-    lines.extend(
-        [
-            "",
-            "Unknown commands are passed to the AI agent.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-@register_command("status")
-def _cmd_status(
-    args: str, chat_id: str, sender_email: str, sender_name: str
-) -> str:
-    """Show bot status."""
-    from .version import __version__, __repo__
-
-    lines = [
-        "**Bot Status**",
-        f"Version: `{__version__}`",
-        f"Repo: {__repo__}",
-    ]
-    return "\n".join(lines)
-
-
-@register_command("model")
-def _cmd_model(
-    args: str, chat_id: str, sender_email: str, sender_name: str
-) -> str:
-    """Show or set model."""
-    if not args:
-        return "Current model: default\nUsage: `/model <name>`"
-    return f"Model switching is managed by the Hermes gateway. Current: `{args.strip()}`"
 
 
 def is_command(content: str) -> bool:
