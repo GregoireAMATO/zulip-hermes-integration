@@ -194,6 +194,6 @@ async def upload_file_to_zulip(
 
     if uri.startswith("/"):
         base = getattr(client, "base_url", "")
-        uri = base + uri
+        uri = urljoin(base, uri)
 
     return uri

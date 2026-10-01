@@ -3,9 +3,25 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", ["https://z.com", "https://z.com/api/"])
+async def test_upload_url_uses_site_origin_with_real_sdk_base_url(tmp_path, base_url):
+    from zulip.media import upload_file_to_zulip
+
+    image = tmp_path / "screenshot.png"
+    image.write_bytes(b"png")
+    client = SimpleNamespace(
+        base_url=base_url,
+        upload_file=lambda file: {"result": "success", "uri": "/user_uploads/1/capture.png"},
+    )
+    url = await upload_file_to_zulip(client, str(image), str(tmp_path))
+    assert url == "https://z.com/user_uploads/1/capture.png"
 
 
 class TestOutboundUpload:
