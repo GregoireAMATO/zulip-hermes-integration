@@ -18,11 +18,10 @@ Hermes gateway adapter for Zulip streams and private messages, with topic thread
 
 ## Table of Contents
 
+- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Verification](#verification)
 - [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
 - [Configuration](#configuration)
 - [Slash Commands](#slash-commands)
 - [Progressive Activity Trace](#progressive-activity-trace)
@@ -38,6 +37,19 @@ Hermes gateway adapter for Zulip streams and private messages, with topic thread
 - [Updating](#updating)
 - [Contributing](#contributing)
 - [Documentation](#documentation)
+
+## Prerequisites
+
+- **Hermes** `>= 0.18.2` (native exec-approval buttons need `>= 0.21.3`)
+- **Python** 3.8+
+- **A Zulip bot** — see below
+
+### Creating a Zulip Bot
+
+1. In Zulip, go to **Settings → Bots → Add a new bot**
+2. Choose **Generic bot**
+3. Copy the **bot email** and **API key** — Quick Start step 3 needs both
+4. **Subscribe the bot to the streams it should answer in** (Stream settings → Subscribers). A bot that is not subscribed never sees those messages.
 
 ## Quick Start
 
@@ -60,10 +72,33 @@ hermes plugins enable zulip
 hermes gateway
 ```
 
-`hermes gateway setup` runs an interactive wizard for step 3 instead — it reads the plugin's
-declared environment variables and prompts for each one, no manual file editing required.
+Step 3 can be done for you: `hermes gateway setup` prompts for each declared setting and
+writes them to `~/.hermes/.env`, so nothing needs editing by hand.
 
-Then DM the bot, or @-mention it in a stream it is subscribed to.
+Then tell the gateway to run the platform, in `~/.hermes/config.yaml`:
+
+```yaml
+gateway:
+  platforms:
+    zulip:
+      enabled: true
+```
+
+> ⚠️ Install the whole repository, not individual files — the plugin is 28 modules that
+> import from each other, so copying only `adapter.py` fails to load.
+
+### Container / system-wide install
+
+To install for every user on the host instead:
+
+```bash
+HERMES_PATH=$(python3 -c "import hermes_cli; print(hermes_cli.__path__[0])")
+rm -rf "$HERMES_PATH/../plugins/platforms/zulip"
+git clone https://github.com/niyazmft/zulip-hermes-integration.git \
+  "$HERMES_PATH/../plugins/platforms/zulip"
+```
+
+DM the bot, or @-mention it in a stream it is subscribed to.
 
 ## Verification
 
@@ -122,63 +157,11 @@ filtered — see [Troubleshooting](#troubleshooting).
 - **Audit Logging**: JSON-line audit log with rotation, recording policy blocks, reaction triggers and queue transitions
 - **Health Probe**: pre-flight server check with SSRF protection and structured `health_status` logging
 
-## Prerequisites
-
-- **Hermes** `>= 0.18.2` (native exec-approval buttons need `>= 0.21.3`)
-- **Python** 3.8+
-- **Zulip bot** on your realm (see below)
-
-### Creating a Zulip Bot
-
-1. In Zulip, go to **Settings → Bots → Add a new bot**
-2. Choose **Generic bot**
-3. Copy the **bot email** and **API key** — Quick Start step 3 needs both
-4. **Subscribe the bot to the streams it should answer in** (Stream settings → Subscribers). A bot that is not subscribed never sees those messages.
-
-## Installation
-
-### From source (recommended)
-
-```bash
-mkdir -p ~/.hermes/plugins
-rm -rf ~/.hermes/plugins/zulip
-git clone https://github.com/niyazmft/zulip-hermes-integration.git ~/.hermes/plugins/zulip
-hermes plugins enable zulip
-```
-
-> ⚠️ Install the whole repository, not individual files. The plugin is 28 modules and
-> imports between them — copying only `adapter.py` produces an import error at load time.
-
-### Bundled / container install
-
-```bash
-HERMES_PATH=$(python3 -c "import hermes_cli; print(hermes_cli.__path__[0])")
-rm -rf "$HERMES_PATH/../plugins/platforms/zulip"
-git clone https://github.com/niyazmft/zulip-hermes-integration.git \
-  "$HERMES_PATH/../plugins/platforms/zulip"
-```
-
 ## Configuration
 
-### Interactive setup (recommended)
-
-```bash
-hermes gateway setup
-```
-
-The wizard reads the plugin's `requires_env` / `optional_env` declarations and prompts for
-each value, then writes them to `~/.hermes/.env`. Credentials can be updated later with
-`hermes config`.
-
-### Enable the platform
-
-```yaml
-# ~/.hermes/config.yaml
-gateway:
-  platforms:
-    zulip:
-      enabled: true
-```
+Credentials are set in [Quick Start](#quick-start). This section covers how the bot decides
+**when** to answer; every knob is also in the
+[environment reference](#environment-variable-reference).
 
 ### Stream trigger modes
 
