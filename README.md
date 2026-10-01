@@ -215,11 +215,6 @@ request needs judgement:
 | `/unpin` | unstar/unpin it (or ask the AI) | `/unpin` → ⭐ removed |
 | `/unlisten`, `/stop-listening` | end a [sticky engagement](#sticky-engagement) early | `/unlisten` → "Stopped listening in this topic" |
 
-**Gateway-native commands are not handled here.** `/help`, `/status`, `/model`, `/stop`,
-`/new`, `/reset`, `/version` and the rest belong to Hermes and fall through untouched, so
-model switching and session reset behave exactly as they do on any other platform.
-Registering one of these names in the plugin would shadow the gateway command — see #190.
-
 Add your own:
 
 ```python
@@ -234,7 +229,7 @@ def _cmd_ping(args, chat_id, sender_email, sender_name):
 
 ## Progressive Activity Trace
 
-> **In 10 seconds:** `/summarise every open PR` → the topic shows a message that updates live:
+> `/summarise every open PR` → the topic shows a message that updates live:
 > `✅ $ gh pr list (1.2s)` → `💬 found 4, reading diffs` → `✅ **Done** — run finished in 18s`.
 
 By default a topic only sees the final reply, so a run that takes a while is invisible.
@@ -285,7 +280,7 @@ Off by default, because it adds outbound writes.
 
 ## History-aware Context
 
-> **In 10 seconds:** someone asks *"didn't we hit this 502 before?"* → the bot answers with
+> Someone asks *"didn't we hit this 502 before?"* → the bot answers with
 > the earlier messages quoted in its prompt, instead of guessing.
 
 Zulip is the only durable record of a topic, but by default the agent sees just the current
@@ -316,7 +311,7 @@ sessions.
 
 ## In-Channel Action Triggers
 
-> **In 10 seconds:** the bot proposes a fix and ends with "say the word"; you react 👍 to
+> The bot proposes a fix and ends with "say the word"; you react 👍 to
 > *its* message; the agent proceeds in that same topic, with its reply and trace landing there.
 
 ```bash
@@ -349,7 +344,7 @@ someone typing that sentence.
 
 ## Sticky Engagement
 
-> **In 10 seconds:** `@**hermes-bot** fix the typo in the README` → then, **without
+> `@**hermes-bot** fix the typo in the README` → then, **without
 > mentioning it again**, `and update the changelog too` → the bot answers both. Five
 > minutes of silence ends it (`/unlisten` ends it immediately).
 
@@ -378,7 +373,7 @@ half-enabling the feature.
 
 ## Per-Session Queue
 
-> **In 10 seconds:** in a shared topic, you ask for a long change; your teammate asks for a
+> In a shared topic, you ask for a long change; your teammate asks for a
 > different one while it runs. Without this, their message is pushed *into* your running
 > turn and redirects your work. With `ZULIP_SESSION_QUEUE=1`, theirs waits its turn.
 
@@ -403,7 +398,7 @@ Use separate topics for genuinely parallel work; use DMs for private work.
 
 ## Stream Watching
 
-> **In 10 seconds:** you want the bot to know what `#general` has been discussing without it
+> You want the bot to know what `#general` has been discussing without it
 > answering every line.
 
 Two flags exist for this, and **they are alternatives — pick one**:
@@ -428,7 +423,7 @@ context from the live message:
 
 ## Actionable Refs
 
-> **In 10 seconds:** the agent writes `see https://github.com/owner/repo/pull/128` → if that
+> The agent writes `see https://github.com/owner/repo/pull/128` → if that
 > PR exists you get a clickable `owner/repo#128` link; if it 404s, the URL is left exactly as
 > written.
 
@@ -469,7 +464,7 @@ fails:
 
 ## Sending Files
 
-> **In 10 seconds:** the agent saves `report.csv` to its workspace and sends it; the topic
+> The agent saves `report.csv` to its workspace and sends it; the topic
 > gets a clickable download link.
 
 ```python
@@ -513,15 +508,14 @@ Set these in `~/.hermes/.env`. Credentials can also be provided by the setup wiz
 | `ZULIP_ALLOW_ALL_USERS` | `false` | `false` | disables authorization entirely — **dev only** |
 | `ZULIP_MAX_MESSAGES_PER_MINUTE` | `60` | `10` | per-sender rate limit; `0` disables |
 
-**Pairing mode, in 10 seconds:** a new user DMs the bot → the bot replies
+**Pairing mode:** a new user DMs the bot → the bot replies
 `Your pairing code: PAIR-ABC123` and asks them to contact an admin → the admin adds that
 email to `ZULIP_ALLOWED_USERS` and restarts → they can now DM normally.
 
-> ⚠️ The issued code is **display-only today** — nothing consumes it yet (#198). Approval is
-> the admin adding the email, either via `ZULIP_ALLOWED_USERS` or by adding it to
-> `{data_dir}/zulip_allowlist.json` (`{"allowlist": ["them@org.zulipchat.com"]}`, merged over
-> the env list at startup). If you want approval without the code step, use
-> `ZULIP_DM_POLICY=allowlist`.
+> ⚠️ The code itself is informational. To grant access, add the email to
+> `ZULIP_ALLOWED_USERS`, or add it to `{data_dir}/zulip_allowlist.json` as
+> `{"allowlist": ["them@org.zulipchat.com"]}` (merged over the env list at startup). For
+> approval without the code step, use `ZULIP_DM_POLICY=allowlist`.
 
 ### Stream triggers and addressing
 
