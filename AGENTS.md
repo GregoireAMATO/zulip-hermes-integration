@@ -156,6 +156,10 @@ Supported: `save_text()`, `save_bytes()`, `save_json()`, `read_text()`, `list_fi
 
 Temp files auto-delete after upload. Path traversal is blocked.
 
+Hermes local image attachments also upload through `send_image_file()`. They
+preserve the source topic and report success only after the attachment message
+is published. Failed uploads or sends retain the local file for retry.
+
 ---
 
 ## 🧍 Your Identity

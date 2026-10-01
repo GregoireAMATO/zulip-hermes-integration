@@ -2345,6 +2345,42 @@ class ZulipAdapter(BasePlatformAdapter):
             logger.error("get_user_info error: %s", e)
             return None
 
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Upload a native Hermes image and publish it in the source topic.
+
+        Hermes routes local image attachments through this method rather than
+        send(media_files=...). A failed upload must not become a successful
+        text-only delivery. Retain the source file until publication succeeds.
+        """
+        try:
+            _parse_target(chat_id)
+            url = await asyncio.wait_for(
+                upload_file_to_zulip(self.client, image_path, self._data_dir),
+                timeout=self._send_timeout,
+            )
+        except asyncio.TimeoutError:
+            return SendResult(success=False, error="Zulip image upload timed out")
+        except Exception as exc:
+            logger.warning("zulip native image upload failed: %s", type(exc).__name__)
+            return SendResult(success=False, error="Zulip image upload failed")
+
+        link = f"[{Path(url).name}]({url})"
+        content = f"{caption}\n\n{link}" if caption else link
+        result = await self._send_single(chat_id, content, metadata or {}, None)
+        if result.success:
+            _safe_delete_temp_file(image_path)
+        elif not result.error:
+            result.error = "Zulip image publication failed"
+        return result
+
     async def send(
         self,
         chat_id: str,
