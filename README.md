@@ -16,9 +16,6 @@ Hermes gateway adapter for Zulip streams and private messages, with topic thread
 > sovereign, no chat-vendor lock-in. The pattern Slack and Block's Buzz are racing to
 > productize, delivered **open source** and **self-hosted**.
 
-> 📊 Parity with the sibling is **tracked, not assumed** — see [docs/PARITY.md](docs/PARITY.md)
-> for the capability matrix and the shared adapter spec.
-
 ## Table of Contents
 
 - [Quick Start](#quick-start)
@@ -659,9 +656,7 @@ Then open a PR. `main` is protected: PR required, linear history, squash merge, 
 ## Documentation
 
 - **[AGENTS.md](AGENTS.md)** — the runtime guide the agent itself reads: addressing rules, metadata, injected context labels, troubleshooting
-- **[docs/SETUP.md](docs/SETUP.md)** — step-by-step install for a fresh host
 - **[SECURITY.md](SECURITY.md)** — threat model, credential handling, explicit non-guarantees
-- **[docs/PARITY.md](docs/PARITY.md)** — capability matrix and shared adapter spec with the OpenClaw sibling
 - **[docs/RELEASING.md](docs/RELEASING.md)** — release procedure
 - **[CHANGELOG.md](CHANGELOG.md)** — release history
 
