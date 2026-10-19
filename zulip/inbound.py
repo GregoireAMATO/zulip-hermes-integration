@@ -477,6 +477,54 @@ async def handle_message(adapter: Any, message: dict) -> None:
     # miss refreshes the persisted cache with one bounded fetch (#152).
     sender_full_name = await adapter._resolve_display_name(message)
 
+    # --- DM policy check (Issue #48) ---
+    if msg_type == "private":
+        sender_email = message.get("sender_email", "")
+        # Approval happens out of process (``python3 -m zulip.pairing``), so
+        # pick up a rewritten allowlist before deciding (issue #198). This
+        # is one stat() on the data file, and it also makes a revocation
+        # take effect without a restart.
+        adapter._policy.refresh_if_changed()
+        allowed, pairing_code = adapter._policy.check_dm(sender_email)
+        if not allowed:
+            await adapter._audit_logger.log_policy_block(
+                sender_id=sender_email,
+                reason=f"dm_policy={adapter._policy.mode}",
+                kind="dm",
+            )
+            reply = ""
+            if pairing_code:
+                reply = (
+                    f"👋 Hi! You need to be approved before messaging this bot.\n\n"
+                    f"Your pairing code: **PAIR-{pairing_code}**\n\n"
+                    f"Share this code with your admin to get access. They can\n"
+                    f"approve it with:\n"
+                    f"`python3 -m zulip.pairing approve PAIR-{pairing_code}`"
+                )
+            elif adapter._policy.mode == "disabled":
+                reply = "🚫 DMs to this bot are currently disabled."
+            else:
+                reply = "🚫 You are not authorized to message this bot."
+
+            try:
+                await adapter._sdk_call(
+                    adapter.client.send_message,
+                    {
+                        "type": "private",
+                        "to": _private_recipient_ids(message),
+                        "content": reply,
+                    },
+                    timeout=adapter._send_timeout,
+                )
+            except Exception as e:
+                logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
+
+            # Clean up: stop typing, mark as read
+            await adapter._stop_typing(typing_params)
+            await adapter._mark_read(message_id)
+            logger.info("zulip DM blocked [policy=%s sender=%s]", adapter._policy.mode, mask_pii(sender_email))
+            return
+
     # --- Command interception (before AI dispatch) ---
     if is_command(content):
         sender_email = message.get("sender_email", "")
@@ -550,54 +598,6 @@ async def handle_message(adapter: Any, message: dict) -> None:
             await adapter._mark_read(message_id)
             return
 
-    # --- DM policy check (Issue #48) ---
-    if msg_type == "private":
-        sender_email = message.get("sender_email", "")
-        # Approval happens out of process (``python3 -m zulip.pairing``), so
-        # pick up a rewritten allowlist before deciding (issue #198). This
-        # is one stat() on the data file, and it also makes a revocation
-        # take effect without a restart.
-        adapter._policy.refresh_if_changed()
-        allowed, pairing_code = adapter._policy.check_dm(sender_email)
-        if not allowed:
-            await adapter._audit_logger.log_policy_block(
-                sender_id=sender_email,
-                reason=f"dm_policy={adapter._policy.mode}",
-                kind="dm",
-            )
-            reply = ""
-            if pairing_code:
-                reply = (
-                    f"👋 Hi! You need to be approved before messaging this bot.\n\n"
-                    f"Your pairing code: **PAIR-{pairing_code}**\n\n"
-                    f"Share this code with your admin to get access. They can\n"
-                    f"approve it with:\n"
-                    f"`python3 -m zulip.pairing approve PAIR-{pairing_code}`"
-                )
-            elif adapter._policy.mode == "disabled":
-                reply = "🚫 DMs to this bot are currently disabled."
-            else:
-                reply = "🚫 You are not authorized to message this bot."
-
-            try:
-                await adapter._sdk_call(
-                    adapter.client.send_message,
-                    {
-                        "type": "private",
-                        "to": _private_recipient_ids(message),
-                        "content": reply,
-                    },
-                    timeout=adapter._send_timeout,
-                )
-            except Exception as e:
-                logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
-
-            # Clean up: stop typing, mark as read
-            await adapter._stop_typing(typing_params)
-            await adapter._mark_read(message_id)
-            logger.info("zulip DM blocked [policy=%s sender=%s]", adapter._policy.mode, mask_pii(sender_email))
-            return
-
     if msg_type == "stream":
         stream_id = message.get("stream_id")
         topic = message.get("subject", "")
@@ -613,6 +613,7 @@ async def handle_message(adapter: Any, message: dict) -> None:
             "chat_type": "stream",
             "user_id": sender_email,
             "user_name": sender_full_name,
+            "message_id": str(message_id) if message_id is not None else None,
         }
         if topic and adapter._routing._conversations is not None:
             # Sessions key on a rename-proof conversation id — never the
@@ -671,6 +672,7 @@ async def handle_message(adapter: Any, message: dict) -> None:
             chat_type="dm",
             user_id=sender_email,
             user_name=sender_full_name,
+            message_id=str(message_id) if message_id is not None else None,
         )
         extra_meta = {
             "user_id": sender_id,

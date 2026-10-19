@@ -89,6 +89,41 @@ class TestFullFlow:
         assert len(adapter.client.calls["add_reaction"]) >= 1
         # handle_message called
         adapter.handle_message.assert_awaited_once()
+        assert adapter.handle_message.call_args.args[0].source.message_id == "42"
+
+    @pytest.mark.asyncio
+    async def test_private_message_propagates_trigger_id(self, adapter):
+        await adapter._handle_message({
+            "id": 43, "type": "private", "content": "hello",
+            "sender_email": "user@example.test", "sender_full_name": "User",
+            "sender_id": 99,
+        })
+        assert adapter.handle_message.call_args.args[0].source.message_id == "43"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["/help", "/status", "/model test"])
+    async def test_native_command_reaches_gateway(self, adapter, command):
+        await adapter._handle_message({
+            "id": 44, "type": "stream", "stream_id": 1, "subject": "test",
+            "display_recipient": "example", "content": command,
+            "sender_email": "user@example.test", "sender_full_name": "User",
+            "sender_id": 99,
+        })
+        adapter.handle_message.assert_awaited_once()
+        assert adapter.client.calls["send_message"] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["/help", "/streams"])
+    async def test_dm_policy_precedes_native_and_plugin_commands(self, adapter, command):
+        adapter._policy.check_dm = MagicMock(return_value=(False, None))
+        adapter._policy.refresh_if_changed = MagicMock()
+        await adapter._handle_message({
+            "id": 45, "type": "private", "content": command,
+            "sender_email": "user@example.test", "sender_full_name": "User",
+            "sender_id": 99,
+        })
+        adapter.handle_message.assert_not_awaited()
+        assert "not authorized" in adapter.client.calls["send_message"][0]["content"]
 
     @pytest.mark.asyncio
     async def test_chunking_send(self, adapter, monkeypatch):

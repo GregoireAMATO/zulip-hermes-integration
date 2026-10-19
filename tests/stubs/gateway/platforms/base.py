@@ -15,6 +15,8 @@ class MessageType(Enum):
 class SendResult:
     success: bool
     message_id: str = ""
+    error: Optional[str] = None
+    retryable: bool = False
 
 
 class ProcessingOutcome(Enum):
@@ -56,6 +58,7 @@ class MessageSource:
     chat_type: str = ""
     user_id: str = ""
     user_name: str = ""
+    message_id: Optional[str] = None
     # Session-scoping discriminator on the real SessionSource. Only set by the
     # adapter when ZULIP_TOPIC_SESSIONS is enabled.
     thread_id: str = ""

@@ -398,11 +398,17 @@ def _resolve_reaction_triggers() -> ReactionTriggerConfig:
 class ZulipAdapter(BasePlatformAdapter):
     """Zulip platform adapter for Hermes Gateway."""
 
+    # Native tool progress detects edit_message separately from answer streaming.
+    SUPPORTS_MESSAGE_EDITING = False
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform("zulip"))
         extra = config.extra or {}
+        self._progress_edit_failures: dict[tuple[str, str], str] = {}
 
         self.api_key = runtime_scope.get_setting("ZULIP_API_KEY") or extra.get("api_key", "")
+        # Hermes's multiplex collision guard reads this standard credential name.
+        self.api_token = self.api_key
         self.email = runtime_scope.get_setting("ZULIP_EMAIL") or extra.get("email", "")
         self.site = runtime_scope.get_setting("ZULIP_SITE") or extra.get("site", "")
 
@@ -2557,6 +2563,18 @@ class ZulipAdapter(BasePlatformAdapter):
         return await approvals.send_exec_approval_prompt(self, prompt)
 
     # ── Outbound content egress (zulip.outbound) ────────────────────────────
+    @property
+    def MAX_MESSAGE_LENGTH(self) -> int:
+        limit, _ = _resolve_chunk_config()
+        return max(1, min(limit, 10000) - len(self._response_prefix))
+
+    async def edit_message(
+        self, chat_id: str, message_id: str, content: str, *,
+        finalize: bool = False, metadata: Any = None,
+    ) -> SendResult:
+        """Edit one native progress bubble without changing its topic."""
+        return await outbound.edit_message(self, chat_id, message_id, content)
+
     # The send path, chunking, media egress, the outbound secret guard, the
     # ref rendering and the typing indicators all live in ``zulip.outbound``.
     # These delegates keep the historical ``adapter._<name>`` call sites and the

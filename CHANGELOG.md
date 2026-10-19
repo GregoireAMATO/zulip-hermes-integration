@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Retain the host multiplex credential alias, triggering message ids and DM policy ordering when upgrading the downstream integration.
+- Restore content-only native tool progress edits with bounded failure handling and outbound credential/reasoning hygiene. Assistant streaming stays disabled. See `docs/HERMES-V113-MIGRATION.md` for the disposition of the downstream patches.
+
 ## [1.13.0] - 2026-10-18
 
 This release is about the failure paths that looked like success. A version check that could not reach GitHub printed "Already up to date"; an answered run was also reported as "run ended without a reply"; a mention the server flagged was handed to the agent unstripped and logged at debug. Each of those is now a distinct, visible fact — and the same discipline was turned on the compatibility gate, whose own fatal paths are now proven to fire. Alongside it, a file a user uploads finally reaches the agent as a file, a message the gateway missed while it was down is caught up in its own topic, and the client path notices when it has gone deaf.

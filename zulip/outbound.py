@@ -37,6 +37,7 @@ their owning modules rather than imported as names, so patching
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -383,6 +384,56 @@ async def send_document(
 
 
 # ── Send path ───────────────────────────────────────────────────────────────
+
+
+async def edit_message(
+    adapter: Any, chat_id: str, message_id: str, content: str,
+) -> SendResult:
+    """Content-only progress transport; freeze a failed bubble to avoid spam.
+
+    A retryable failure makes Hermes keep the bubble instead of posting one
+    message per tool. The cache is bounded, and final sends stay independent.
+    Apply the same reasoning and credential hygiene as ordinary sends.
+    """
+    key = (str(chat_id), str(message_id))
+
+    def failure(error: str) -> SendResult:
+        adapter._progress_edit_failures.pop(key, None)
+        adapter._progress_edit_failures[key] = error
+        while len(adapter._progress_edit_failures) > 256:
+            del adapter._progress_edit_failures[next(iter(adapter._progress_edit_failures))]
+        return SendResult(
+            success=False, message_id=str(message_id), error=error, retryable=True,
+        )
+
+    if key in adapter._progress_edit_failures:
+        return failure(adapter._progress_edit_failures[key])
+    try:
+        mid = adapter._validate_message_id(message_id)
+        parse_target(chat_id)
+        if "[[zulip" in content:
+            return failure("Control directives are not supported in progress edits")
+        content = strip_think_blocks(content)
+        if not content.strip() or len(content) > adapter.MAX_MESSAGE_LENGTH:
+            return failure("Progress edit is empty or exceeds the message budget")
+        payload = adapter._response_prefix + content
+        leaked = detect_secret_leak(adapter, payload)
+        if leaked:
+            await refuse_secret_leak(adapter, leaked, chat_id)
+            return failure("Progress edit contained host credentials")
+        result = await adapter._sdk_call(
+            adapter.client.update_message,
+            {"message_id": mid, "content": payload},
+            timeout=adapter._send_timeout,
+        )
+        if result.get("result") == "success":
+            return SendResult(success=True, message_id=str(message_id))
+        return failure("Zulip rejected progress edit")
+    except asyncio.CancelledError:
+        failure("Progress edit interrupted")
+        raise
+    except Exception as exc:
+        return failure(type(exc).__name__ + ": progress edit failed")
 
 
 async def send(
