@@ -10,4 +10,7 @@ def test_stream_typing_observer_requests_required_capability():
     args, kwargs = api.call_args
     assert args == ("POST", "register")
     assert "typing" in json.loads(kwargs["event_types"])
-    assert json.loads(kwargs["client_capabilities"]) == {"stream_typing_notifications": True}
+    assert json.loads(kwargs["client_capabilities"]) == {
+        "notification_settings_null": False,
+        "stream_typing_notifications": True,
+    }
