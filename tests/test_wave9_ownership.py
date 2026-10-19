@@ -227,4 +227,4 @@ class TestDmPolicyGate:
         await a._handle_message(_dm("let me in"))
 
         assert a.handle_message.call_count == 0
-        a.client.send_message.assert_called()
+        a.client.send_message.assert_not_called()

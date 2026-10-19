@@ -426,6 +426,14 @@ class ZulipAdapter(BasePlatformAdapter):
         # inbound path (issue #152), and how reaction-trigger targets are
         # recognised (epic #149).
         self._bot_user_id = ""
+        # Snapshot the configured host allowlist before any trigger or hook.
+        # Unlike the DM pairing list, this cannot grow through disk seeding.
+        raw_allowed = runtime_scope.get_setting("ZULIP_ALLOWED_USERS")
+        self._allowed_senders = (
+            {value.strip().casefold() for value in raw_allowed.split(",") if value.strip()}
+            if raw_allowed is not None else None
+        )
+        self._sender_bot_status: dict[str, bool] = {}
 
         # Validate site URL before creating client: https-only unless the
         # operator opted in, so the API key cannot leave in cleartext by
@@ -985,15 +993,7 @@ class ZulipAdapter(BasePlatformAdapter):
     async def _report_run_end(
         self, event: Any, delivered: Optional[bool], outcome: Any
     ) -> None:
-        """Correct the room's reaction, and say so when a run ended silently.
-
-        Two shapes leave a person looking at ✅ and then nothing, which is the
-        worst diagnostic outcome: an answered-looking message with no answer. A
-        run the gateway reports as FAILURE or CANCELLED never takes back the ✅
-        that ``inbound_queue._dispatch_turn`` placed on a clean *dispatch*
-        return, and a run that sent nothing at all is visible only in the host's
-        audit log (#219).
-        """
+        """Correct the reaction; empty/refused turns remain audit-only."""
         if delivered is None:
             return
         status = getattr(outcome, "value", outcome)
@@ -1005,7 +1005,7 @@ class ZulipAdapter(BasePlatformAdapter):
             return
         await self._place_error_reaction(event)
         if not delivered:
-            await self._post_silent_run_notice(chat_id, metadata, status, outcome)
+            logger.info("zulip run ended without a reply [status=%s]; audit only", status)
 
     async def _place_error_reaction(self, event: Any) -> None:
         """Take back the dispatch ✅ and mark the run as failed.
@@ -1040,39 +1040,6 @@ class ZulipAdapter(BasePlatformAdapter):
             logger.warning(
                 "zulip error reaction failed (dropped) [msg=%s]: %s",
                 mask_pii(str(message_id)),
-                mask_pii(str(e)),
-            )
-
-    # Says only what is known: that the run produced no reply, plus the reason
-    # where the outcome actually carries one. It must not invent a cause.
-    _SILENT_RUN_NOTICE = {
-        "failure": "run failed without a reply — see the audit log",
-        "cancelled": "run was cancelled without a reply — see the audit log",
-    }
-    _SILENT_RUN_NOTICE_DEFAULT = "run ended without a reply — see the audit log"
-
-    async def _post_silent_run_notice(
-        self, chat_id: str, metadata: Any, status: Any, outcome: Any
-    ) -> None:
-        """Post one short line so a silent run is visible where it happened.
-
-        Once per work item: the only caller is ``_report_run_end``, which is
-        reached only from the single pop in ``_audit_run_end``. If it cannot be
-        sent it is logged and dropped — no retry loop, and nothing raised into
-        the gateway loop on the way out of a failed run.
-        """
-        text = self._SILENT_RUN_NOTICE.get(status, self._SILENT_RUN_NOTICE_DEFAULT)
-        reason = getattr(outcome, "reason", None)
-        if reason:
-            text = f"{text} ({reason})"
-        try:
-            await self.send(
-                chat_id, text, metadata=metadata, counts_as_reply=False
-            )
-        except Exception as e:
-            logger.warning(
-                "zulip silent-run notice failed (dropped) [chat=%s]: %s",
-                mask_pii(chat_id),
                 mask_pii(str(e)),
             )
 

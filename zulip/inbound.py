@@ -122,6 +122,33 @@ async def handle_message(adapter: Any, message: dict) -> None:
         str(message.get("sender_full_name") or "").strip() or "Unknown"
     )
 
+    # Authorization precedes mentions, soft gate, commands, reactions and hooks.
+    # A bot can never override this by being explicitly allowlisted.
+    sender_id = str(message.get("sender_id") or "")
+    sender_is_bot = is_bot_sender(
+        sender_email, sender_id=sender_id, bot_email=adapter.email,
+        bot_user_id=adapter._bot_user_id,
+    ) or message.get("sender_is_bot") is True
+    allowed = adapter._allowed_senders
+    if sender_is_bot or (allowed is not None and not (
+        sender_email.strip().casefold() in allowed or sender_id in allowed
+    )):
+        logger.info("zulip drop [bot or sender outside configured allowlist] msg=%s",
+                    mask_pii(str(message_id)))
+        return
+    if allowed is not None:
+        # Verify the server flag too: custom bot addresses need not end in -bot.
+        if sender_id not in adapter._sender_bot_status:
+            user = await adapter.get_user_info(sender_id)
+            if not user or "is_bot" not in user:
+                logger.warning("zulip drop [unresolved sender identity] msg=%s",
+                               mask_pii(str(message_id)))
+                return
+            adapter._sender_bot_status[sender_id] = bool(user["is_bot"])
+        if adapter._sender_bot_status[sender_id]:
+            logger.info("zulip drop [bot sender] msg=%s", mask_pii(str(message_id)))
+            return
+
     # --- Rate limiting (per-sender) ---
     sender_key = sender_email or str(message.get("sender_id", ""))
     if not adapter._rate_limiter.check(sender_key):
@@ -333,27 +360,6 @@ async def handle_message(adapter: Any, message: dict) -> None:
                 reason=f"group_policy={adapter._policy.group_mode}",
                 kind="stream",
             )
-            if adapter._policy.group_mode == "disabled":
-                reply = "🚫 Stream messages to this bot are currently disabled."
-            else:
-                reply = "🚫 You are not authorized to send stream messages to this bot."
-            try:
-                await adapter._sdk_call(
-                    adapter.client.send_message,
-                    {
-                        "type": "stream",
-                        # Read from the message rather than relying on
-                        # locals set elsewhere: these were previously bound
-                        # as a side effect of the typing-indicator block,
-                        # which now runs after this point.
-                        "to": message.get("stream_id"),
-                        "topic": message.get("subject", ""),
-                        "content": reply,
-                    },
-                    timeout=adapter._send_timeout,
-                )
-            except Exception as e:
-                logger.warning("group policy rejection reply failed: %s", mask_pii(str(e)))
             # Mark message as read and stop processing
             try:
                 await adapter._sdk_call(
@@ -492,33 +498,6 @@ async def handle_message(adapter: Any, message: dict) -> None:
                 reason=f"dm_policy={adapter._policy.mode}",
                 kind="dm",
             )
-            reply = ""
-            if pairing_code:
-                reply = (
-                    f"👋 Hi! You need to be approved before messaging this bot.\n\n"
-                    f"Your pairing code: **PAIR-{pairing_code}**\n\n"
-                    f"Share this code with your admin to get access. They can\n"
-                    f"approve it with:\n"
-                    f"`python3 -m zulip.pairing approve PAIR-{pairing_code}`"
-                )
-            elif adapter._policy.mode == "disabled":
-                reply = "🚫 DMs to this bot are currently disabled."
-            else:
-                reply = "🚫 You are not authorized to message this bot."
-
-            try:
-                await adapter._sdk_call(
-                    adapter.client.send_message,
-                    {
-                        "type": "private",
-                        "to": _private_recipient_ids(message),
-                        "content": reply,
-                    },
-                    timeout=adapter._send_timeout,
-                )
-            except Exception as e:
-                logger.warning("DM policy rejection failed: %s", mask_pii(str(e)))
-
             # Clean up: stop typing, mark as read
             await adapter._stop_typing(typing_params)
             await adapter._mark_read(message_id)

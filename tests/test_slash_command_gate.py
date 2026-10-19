@@ -109,7 +109,7 @@ class TestTheOtherGatesSurvive:
         await a._handle_message(_stream_msg("/deny", sender="stranger@zulip.com"))
         assert a.handle_message.call_count == 0
         sent = [c.args[0] for c in a.client.send_message.call_args_list]
-        assert any("not authorized" in s.get("content", "") for s in sent)
+        assert sent == []
 
     @pytest.mark.asyncio
     async def test_stream_filter_still_blocks_a_command(

@@ -123,7 +123,7 @@ class TestFullFlow:
             "sender_id": 99,
         })
         adapter.handle_message.assert_not_awaited()
-        assert "not authorized" in adapter.client.calls["send_message"][0]["content"]
+        assert adapter.client.calls["send_message"] == []
 
     @pytest.mark.asyncio
     async def test_chunking_send(self, adapter, monkeypatch):
