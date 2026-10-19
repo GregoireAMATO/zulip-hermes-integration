@@ -110,6 +110,7 @@ def test_two_profiles_resolve_their_own_credentials_and_data_dir(hermes, tmp_pat
     alice = ZulipAdapter(_Config())
     assert alice.email == "alice@example.test"
     assert alice.api_key == "alice-key"
+    assert alice.api_token == alice.api_key
     assert alice.site == "https://alice.zulipchat.com"
     assert alice._data_dir == str(alice_home)
 
@@ -117,6 +118,7 @@ def test_two_profiles_resolve_their_own_credentials_and_data_dir(hermes, tmp_pat
     bob = ZulipAdapter(_Config())
     assert bob.email == "bob@example.test"
     assert bob.api_key == "bob-key"
+    assert bob.api_token == bob.api_key
     assert bob.site == "https://bob.zulipchat.com"
     assert bob._data_dir == str(bob_home)
 
