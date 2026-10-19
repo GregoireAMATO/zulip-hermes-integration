@@ -1,20 +1,4 @@
-"""A run that ends silently says so in the room (issue #219).
-
-Two shapes used to leave ✅ and then nothing, which is the worst diagnostic
-outcome — an answered-looking message with no answer:
-
-* a run the gateway reports as FAILURE or CANCELLED, which never takes back the
-  ✅ that ``inbound_queue._dispatch_turn`` placed on a clean *dispatch* return;
-* a run that finished having sent nothing at all, visible only in the host's
-  audit log.
-
-Either way "the bot didn't answer" was indistinguishable from "the bot answered
-somewhere else" without reading that log.
-
-The outcome is injected as a plain object carrying ``value`` — the shape
-``tracing.finish_trace`` reads — so these tests do not depend on the host enum
-being importable in the test environment.
-"""
+"""Empty/refused runs stay in the audit; error reactions remain accurate."""
 
 import asyncio
 from types import SimpleNamespace
@@ -149,94 +133,17 @@ class TestErrorReaction:
 
 class TestSilentRunNotice:
     @pytest.mark.asyncio
-    async def test_failure_without_a_reply_marks_and_says_so(self, adapter):
-        await run_to_completion(adapter, stream_event(), FAILURE)
-
-        assert adapter._reaction_cfg.on_error in emojis(adapter, "reactions_added")
-        notices = notice_texts(adapter)
-        assert len(notices) == 1
-        assert "failed without a reply" in notices[0]
-
-    @pytest.mark.asyncio
-    async def test_empty_successful_run_says_so(self, adapter):
-        """The run finished cleanly having sent nothing — the original blind spot."""
-        await run_to_completion(adapter, stream_event(), SUCCESS)
-
-        notices = notice_texts(adapter)
-        assert len(notices) == 1
-        assert "ended without a reply" in notices[0]
-
-    @pytest.mark.asyncio
-    async def test_cancelled_run_says_so(self, adapter):
-        await run_to_completion(adapter, stream_event(), CANCELLED)
-
-        notices = notice_texts(adapter)
-        assert len(notices) == 1
-        assert "cancelled" in notices[0]
-
-    @pytest.mark.asyncio
-    async def test_a_delivered_failure_does_not_post_a_notice(self, adapter):
-        """The reply speaks for itself; only the marker needs correcting."""
-        await run_to_completion(adapter, stream_event(), FAILURE, delivered=True)
-
-        assert notice_texts(adapter) == []
-
-    @pytest.mark.asyncio
-    async def test_notice_goes_to_the_runs_own_route(self, adapter, monkeypatch):
-        event = stream_event(topic="deploy-help", chat_id="999")
+    @pytest.mark.parametrize("outcome", [SUCCESS, FAILURE, CANCELLED,
+        SimpleNamespace(value="failure", reason="authorization refused")])
+    async def test_empty_or_refused_run_is_audit_only(self, adapter, monkeypatch, outcome):
         sent = AsyncMock()
         monkeypatch.setattr(adapter, "send", sent)
-
-        await adapter.on_processing_start(event)
-        await adapter.on_processing_complete(event, SUCCESS)
-
-        assert sent.await_count == 1
-        chat_id, text = sent.await_args.args
-        assert chat_id == "999"
-        assert "without a reply" in text
-        assert sent.await_args.kwargs["metadata"] == {"thread_id": "deploy-help"}
-
-    @pytest.mark.asyncio
-    async def test_notice_is_sent_once_per_work_item(self, adapter):
-        """A queue drain completing the same item again must not re-report it."""
+        audit = AsyncMock()
+        monkeypatch.setattr(adapter._audit_logger, "log_deliver_empty", audit)
         event = stream_event()
-        await run_to_completion(adapter, event, FAILURE)
-        assert len(notice_texts(adapter)) == 1
-
-        # The arming entry was popped by the first completion, so this reports
-        # nothing further — the once-per-item guarantee.
-        await adapter.on_processing_complete(event, FAILURE)
-        await asyncio.sleep(0.1)
-
-        assert len(notice_texts(adapter)) == 1
-
-    @pytest.mark.asyncio
-    async def test_a_notice_that_cannot_be_sent_is_dropped(self, adapter, monkeypatch):
-        """A failing run must not raise into the gateway loop on its way out."""
-        event = stream_event()
-        await adapter.on_processing_start(event)
-
-        async def boom(*a, **k):
-            raise RuntimeError("zulip is unreachable")
-
-        monkeypatch.setattr(adapter, "send", boom)
-        await adapter.on_processing_complete(event, FAILURE)
-        await asyncio.sleep(0.1)
-
-        assert notice_texts(adapter) == []
-
-    @pytest.mark.asyncio
-    async def test_outcome_reason_is_included_when_the_outcome_carries_one(self, adapter):
-        outcome = SimpleNamespace(value="failure", reason="tool timeout")
-        await run_to_completion(adapter, stream_event(), outcome)
-
-        notices = notice_texts(adapter)
-        assert len(notices) == 1
-        assert "tool timeout" in notices[0]
-
-    @pytest.mark.asyncio
-    async def test_no_reason_is_invented_when_the_outcome_has_none(self, adapter):
-        await run_to_completion(adapter, stream_event(), FAILURE)
-
-        notice = notice_texts(adapter)[0]
-        assert "(" not in notice, "the notice must not invent a cause it cannot know"
+        await run_to_completion(adapter, event, outcome)
+        sent.assert_not_awaited()
+        audit.assert_awaited_once()
+        await adapter.on_processing_complete(event, outcome)
+        audit.assert_awaited_once()
+        sent.assert_not_awaited()

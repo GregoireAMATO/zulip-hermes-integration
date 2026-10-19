@@ -541,9 +541,8 @@ class TestBotSendersNeverEngage:
         assert a.handle_message.call_count == 1
         assert entry.last_active == last_active_before
         # The skip is diagnosable, with the sender masked.
-        assert "engagement skip" in caplog.text
+        assert "bot or sender outside configured allowlist" in caplog.text
         assert "helper-bot@org.zulipchat.com" not in caplog.text
-        assert "h***@org.zulipchat.com" in caplog.text
 
         # The human's window is exactly as it was: a follow-up still engages.
         await a._handle_message(_stream_msg("and another thing"))
@@ -563,16 +562,15 @@ class TestBotSendersNeverEngage:
         )
         bot = "helper-bot@org.zulipchat.com"
 
-        # A bot that *names* the bot still dispatches: mention-gating is a
-        # separate, pre-existing gate this issue does not change.
+        # Bot exclusion now precedes the mention gate in every mode.
         await a._handle_message(_stream_msg("@bot hello", sender=bot, sender_id=99))
-        assert a.handle_message.call_count == 1
+        assert a.handle_message.call_count == 0
 
         # But it opens no window: otherwise the next unmentioned message
         # from that bot would be admitted, which is the loop.
         assert a._engagement_store.active_count() == 0
         await a._handle_message(_stream_msg("still here", sender=bot, sender_id=99))
-        assert a.handle_message.call_count == 1
+        assert a.handle_message.call_count == 0
 
     @pytest.mark.asyncio
     async def test_own_message_is_never_accepted_or_refreshed(

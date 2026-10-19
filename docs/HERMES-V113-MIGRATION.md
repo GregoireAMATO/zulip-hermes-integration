@@ -52,3 +52,45 @@ Après cette réponse correcte, les bots 18, 19 et 20 ont échangé 30 notificat
 Conformément à la consigne d'arrêt au premier problème, le profil E2E a été arrêté et le dépôt de production est revenu sur `avant-1.13` (`ba10c62`). Les mêmes cinq unités ont été redémarrées individuellement et sont reconnectées, sans erreur de démarrage ni tour actif à la vérification finale. Les index de sessions n'ont pas été restaurés aveuglément.
 
 Avant une nouvelle bascule : reproduire localement l'interaction des hooks avec un refus d'autorisation, empêcher qu'un tour refusé produise une notification de tour vide, et vérifier les politiques de flux explicites. Pour isoler l'E2E, utiliser une allowlist `ZULIP_GROUP_POLICY=allowlist` / `ZULIP_GROUP_ALLOW_FROM` contenant uniquement le compte testeur, sans afficher sa valeur. Déclarer la capacité de saisie dans la queue d'observation. Aucun de ces changements de politique n'a été appliqué aux profils de production pendant ce lot.
+
+
+## Reprise E2 — isolation et silence (19/10/2026)
+
+Preuve : à `ba10c62` (1.8.1 maison), `adapter._handle_message` ne rejette que
+son propre email ; `PolicyEngine` réserve déjà `ZULIP_ALLOWED_USERS` aux DMs et
+`ZULIP_GROUP_POLICY` vaut `open`. Le moteur applique son allowlist après la
+présélection du transport : arriver aux hooks ne prouve donc pas qu'un agent a
+été autorisé. En 1.13, `inbound.handle_message` accepte tous les messages en
+`onmessage`/soft gate ; une mention, un préfixe, une commande ou une réaction
+suffit dans les autres modes. `is_bot_sender` ne protégeait que l'engagement
+(#221), pas ces déclencheurs. Le preset `recommended` ne résout pas cela :
+son group policy est également `open` et une mention reste un déclencheur.
+La politique de flux amont (`allowlist` + `ZULIP_GROUP_ALLOW_FROM`) aurait
+protégé les flux configurés mais ne fournit aucune exclusion générale des bots.
+Autre preuve de configuration : les deux miroirs avaient `ZULIP_CHATMODE=mention`.
+Cette valeur est invalide dans les deux versions : `resolve_chatmode` la rabat
+sur `onmessage`, où `require_mention` est inactif. La reprise remplace ce réglage
+par la valeur amont `oncall`, après sauvegarde et avec restauration au rollback.
+
+Le changement qui ferme la boucle est #219 : `on_processing_start` arme
+`_audit_turns`, `_audit_run_end` produit `deliver_empty`, puis `_report_run_end`
+appelait `_post_silent_run_notice` sans savoir distinguer refus et tour vide.
+L'ancien hook ne publiait aucun avis. Les 30 avis E étaient eux-mêmes reçus par
+les deux autres bots, présélectionnés puis refusés par le moteur, et republiés.
+
+Correctif local : toute liste `ZULIP_ALLOWED_USERS` explicitement configurée
+est désormais une barrière commune stream/DM, par email ou ID, avant effets,
+mentions, commandes, reprise et réactions. Une liste explicitement vide refuse
+tout ; absence de configuration conserve le défaut amont (les cinq profils de
+production ont une liste explicite non vide). Les bots sont rejetés par identité,
+convention Zulip et, pour un candidat autorisé, par `users/{id}.is_bot` vérifié
+et mis en cache par adaptateur ; une identité non résolue est refusée. Les refus
+et tours vides ne publient plus de texte ; l'audit `deliver_empty` reste actif.
+
+Saisie : aucune capacité n'est nécessaire pour **émettre** `set_typing_status`.
+C'est la queue du **lecteur** qui doit demander `event_types` contenant `typing`
+et `client_capabilities={"stream_typing_notifications": true}` à `register`
+([contrat Zulip](https://zulip.com/api/register-queue)). Le run E ne demandait
+que les types d'événements. `scripts/zulip_transport_probe.py` contient désormais
+la registration utilisée par l'E2E, couverte par un test dédié ; les 16 tests
+des hooks de saisie couvrent le maintien et le routage côté émission.
