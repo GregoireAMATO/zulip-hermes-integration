@@ -10,5 +10,8 @@ import json
 def register_transport_observer(api):
     return api("POST", "register",
         event_types=json.dumps(["message", "reaction", "typing", "update_message"]),
-        client_capabilities=json.dumps({"stream_typing_notifications": True}),
+        client_capabilities=json.dumps({
+            "notification_settings_null": False,
+            "stream_typing_notifications": True,
+        }),
         apply_markdown="false")

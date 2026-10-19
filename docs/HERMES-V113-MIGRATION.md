@@ -89,8 +89,13 @@ et tours vides ne publient plus de texte ; l'audit `deliver_empty` reste actif.
 
 Saisie : aucune capacité n'est nécessaire pour **émettre** `set_typing_status`.
 C'est la queue du **lecteur** qui doit demander `event_types` contenant `typing`
-et `client_capabilities={"stream_typing_notifications": true}` à `register`
+et `client_capabilities={"notification_settings_null": false,
+"stream_typing_notifications": true}` à `register`
 ([contrat Zulip](https://zulip.com/api/register-queue)). Le run E ne demandait
 que les types d'événements. `scripts/zulip_transport_probe.py` contient désormais
 la registration utilisée par l'E2E, couverte par un test dédié ; les 16 tests
 des hooks de saisie couvrent le maintien et le routage côté émission.
+Le serveur refuse HTTP 400 si le champ historique `notification_settings_null`
+est absent dès qu'un objet `client_capabilities` est fourni ; son TypedDict
+`zerver.lib.events.ClientCapabilities` le déclare obligatoire, contrairement
+aux autres capacités optionnelles. Le probe inclut donc les deux champs.
