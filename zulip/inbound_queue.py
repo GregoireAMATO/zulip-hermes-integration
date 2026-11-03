@@ -22,7 +22,10 @@ thin delegates into this module.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from . import outbound
@@ -30,6 +33,22 @@ from .logger import mask_pii
 from .session_queue import PendingTurn
 
 logger = logging.getLogger(__name__)
+
+# handle_message spawns the host task; its start hook can run after the call
+# returns. No portable host acknowledgement distinguishes that from an inline
+# command or a dropped turn. Give the hook a bounded chance to claim reactions,
+# then retain the dispatch acknowledgement for turns that never start a run.
+# A host delaying its start hook beyond this grace period can still acknowledge
+# dispatch early; the run-end error path harmlessly removes that marker.
+# The host calls start before awaiting its message handler. Allow scheduling
+# time without breaking the inbound path's existing sub-250ms latency budget.
+REACTION_START_GRACE_SECONDS = 0.1
+
+
+@dataclass
+class _ReactionDispatch:
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    finish_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def event_route(event: Any) -> tuple[str, Any]:
@@ -95,6 +114,32 @@ class SessionQueueController:
 
     def __init__(self, adapter: Any):
         self._adapter = adapter
+        # Per EVENT, not per session: a command can bypass a running turn in
+        # the same session. Latches also survive a fast run popping its audit
+        # entry before handle_message / mark-read returns. Removed on dispatch
+        # exit, including errors and cancellation; no background timers.
+        self._reaction_starts: dict[int, _ReactionDispatch] = {}
+
+    def reaction_run_started(self, event: Any) -> None:
+        """Claim reaction completion when the delivery audit arms this event."""
+        state = self._reaction_starts.get(id(event))
+        if state is not None:
+            state.started.set()
+
+    @asynccontextmanager
+    async def reaction_finish(self, event: Any):
+        """Order run end after any fallback already placing a reaction.
+
+        A hook arriving beyond the grace period can race the fallback's SDK
+        awaits. Serialize the final reaction so fallback success cannot land
+        *after* the run-end error. The lock is local to this event.
+        """
+        state = self._reaction_starts.get(id(event))
+        if state is None:
+            yield
+        else:
+            async with state.finish_lock:
+                yield
 
     def queue_session_key(self, event: Any) -> str:
         """Session identity for the queue.
@@ -288,16 +333,30 @@ class SessionQueueController:
         on arrival (issue #151).
         """
         adapter = self._adapter
+        state = _ReactionDispatch()
+        self._reaction_starts[id(event)] = state
         try:
-            await adapter.handle_message(event)
-        except Exception:
-            await reactions.error()
-            await adapter._stop_typing(typing_params)
-            raise
-        finally:
-            await adapter._mark_read(message_id)
+            try:
+                await adapter.handle_message(event)
+            except Exception:
+                await reactions.error()
+                await adapter._stop_typing(typing_params)
+                raise
+            finally:
+                await adapter._mark_read(message_id)
 
-        # Only reached on success. The core stops typing itself via the
-        # stop_typing() hook when the agent run finishes; mark the success
-        # reaction here.
-        await reactions.success()
+            try:
+                await asyncio.wait_for(
+                    state.started.wait(), timeout=REACTION_START_GRACE_SECONDS
+                )
+            except asyncio.TimeoutError:
+                # Native commands / host short-circuits have no armed audit
+                # entry and may never call run end. Do not leave eyes forever.
+                # Recheck after the timeout in case the hook just won the race.
+                async with state.finish_lock:
+                    if not state.started.is_set():
+                        await reactions.success()
+            # Otherwise _report_run_end owns both success and error, so eyes
+            # stay for the entire run. Typing remains owned by the host.
+        finally:
+            self._reaction_starts.pop(id(event), None)

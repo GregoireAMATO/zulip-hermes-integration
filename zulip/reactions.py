@@ -165,9 +165,9 @@ class ReactionLifecycle:
     async def error(self, replacing_success: bool = False) -> None:
         """Mark the message as failed.
 
-        ``replacing_success`` is for the case where ✅ was already placed as a
-        *dispatch* acknowledgement and the run is now reported as failed
-        (#219). With ``clear_on_finish`` the success marker has to come off too,
+        ``replacing_success`` also covers a host whose start hook arrives after
+        the bounded dispatch fallback placed ✅. Usually no ✅ was placed and
+        its removal is harmless. With ``clear_on_finish`` it has to come off too,
         or the message shows ✅ and ⚠️ at once and still reads as finished. The
         default keeps the synchronous-dispatch call site unchanged, where ✅ was
         never placed.
