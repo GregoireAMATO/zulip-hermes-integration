@@ -501,6 +501,7 @@ async def handle_message(adapter: Any, message: dict) -> None:
             # Clean up: stop typing, mark as read
             await adapter._stop_typing(typing_params)
             await adapter._mark_read(message_id)
+            await reactions.success()
             logger.info("zulip DM blocked [policy=%s sender=%s]", adapter._policy.mode, mask_pii(sender_email))
             return
 
@@ -575,6 +576,7 @@ async def handle_message(adapter: Any, message: dict) -> None:
             # Clean up: stop typing, mark as read
             await adapter._stop_typing(typing_params)
             await adapter._mark_read(message_id)
+            await reactions.success()
             return
 
     if msg_type == "stream":
@@ -747,6 +749,7 @@ async def handle_message(adapter: Any, message: dict) -> None:
         if not await adapter.gate_approval_decision(
             message=message, event=event, msg_type=msg_type, message_id=message_id
         ):
+            await reactions.success()
             return
 
     # --- Per-session queue (issue #151) ---

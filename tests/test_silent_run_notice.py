@@ -103,21 +103,21 @@ async def run_to_completion(adapter, event, outcome, delivered=False):
 class TestErrorReaction:
     @pytest.mark.asyncio
     async def test_failure_after_a_delivered_reply_marks_the_message(self, adapter):
-        """✅ already answered the dispatch; ⚠️ has to replace it, not join it."""
+        """Remove a possible fallback ✅ and mark the failure directly."""
         await run_to_completion(adapter, stream_event(), FAILURE, delivered=True)
 
         assert adapter._reaction_cfg.on_error in emojis(adapter, "reactions_added")
         assert adapter._reaction_cfg.on_success in emojis(adapter, "reactions_removed"), (
-            "a failed run must not keep the ✅ that its dispatch return placed"
+            "a failed run must not keep a possible dispatch fallback ✅"
         )
 
     @pytest.mark.asyncio
-    async def test_a_delivered_success_keeps_todays_reaction(self, adapter):
-        """The common case must be untouched: no extra marker, no extra message."""
+    async def test_a_delivered_success_places_the_finished_reaction(self, adapter):
+        """Run end now owns the success marker; no extra message is sent."""
         await run_to_completion(adapter, stream_event(), SUCCESS, delivered=True)
 
-        assert adapter.client.reactions_added == []
-        assert adapter.client.reactions_removed == []
+        assert emojis(adapter, "reactions_added") == ["check_mark"]
+        assert emojis(adapter, "reactions_removed") == ["eyes"]
         assert notice_texts(adapter) == []
 
     @pytest.mark.asyncio
@@ -147,3 +147,190 @@ class TestSilentRunNotice:
         await adapter.on_processing_complete(event, outcome)
         audit.assert_awaited_once()
         sent.assert_not_awaited()
+
+
+class TestSuccessAfterDelivery:
+    @staticmethod
+    async def dispatch(adapter, event):
+        from zulip.reactions import ReactionLifecycle
+
+        reactions = ReactionLifecycle(
+            adapter.client, str(event.message_id), adapter._reaction_cfg
+        )
+        adapter._mark_read = AsyncMock()
+        await reactions.start()
+        await adapter._dispatch_turn(event, reactions, None, event.message_id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("clear", [True, False])
+    async def test_dispatch_waits_for_delivered_run_end(self, adapter, clear):
+        from zulip.reactions import ReactionLifecycle
+
+        adapter._reaction_cfg.clear_on_finish = clear
+        event = stream_event()
+        reactions = ReactionLifecycle(adapter.client, str(event.message_id), adapter._reaction_cfg)
+        adapter._mark_read = AsyncMock()
+        adapter.handle_message = AsyncMock(side_effect=adapter.on_processing_start)
+        await reactions.start()
+        await adapter._dispatch_turn(event, reactions, None, event.message_id)
+
+        assert emojis(adapter, "reactions_added") == ["eyes"]
+        assert emojis(adapter, "reactions_removed") == []
+        adapter._note_delivery_attempt(event.source.chat_id, event.metadata)
+        await adapter.on_processing_complete(event, SUCCESS)
+        assert emojis(adapter, "reactions_added") == ["eyes", "check_mark"]
+        assert emojis(adapter, "reactions_removed") == (["eyes"] if clear else [])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("clear", [True, False])
+    @pytest.mark.parametrize("outcome,delivered", [
+        (FAILURE, True), (CANCELLED, True), (SUCCESS, False),
+        (FAILURE, False), (CANCELLED, False),
+    ])
+    async def test_error_never_flashes_success(self, adapter, clear, outcome, delivered):
+        adapter._reaction_cfg.clear_on_finish = clear
+        event = stream_event()
+        adapter.handle_message = AsyncMock(side_effect=adapter.on_processing_start)
+        await self.dispatch(adapter, event)
+        assert emojis(adapter, "reactions_added") == ["eyes"]
+
+        if delivered:
+            adapter._note_delivery_attempt(event.source.chat_id, event.metadata)
+        await adapter.on_processing_complete(event, outcome)
+
+        assert emojis(adapter, "reactions_added") == ["eyes", "warning"]
+        removed = emojis(adapter, "reactions_removed")
+        assert ("eyes" in removed) is clear
+
+    @pytest.mark.asyncio
+    async def test_start_hook_after_handle_returns_claims_reactions(self, adapter):
+        returned = asyncio.Event()
+
+        async def handle(event):
+            returned.set()
+
+        adapter.handle_message = handle
+        event = stream_event()
+        dispatch = asyncio.create_task(self.dispatch(adapter, event))
+        try:
+            await returned.wait()
+            # handle has returned, but the background task hasn't started yet.
+            assert emojis(adapter, "reactions_added") == ["eyes"]
+            await adapter.on_processing_start(event)
+            await dispatch
+            assert emojis(adapter, "reactions_added") == ["eyes"]
+            adapter._note_delivery_attempt(event.source.chat_id, event.metadata)
+            await adapter.on_processing_complete(event, SUCCESS)
+            assert emojis(adapter, "reactions_added") == ["eyes", "check_mark"]
+        finally:
+            dispatch.cancel()
+            await asyncio.gather(dispatch, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outcome", [SUCCESS, FAILURE])
+    async def test_run_end_before_dispatch_returns_is_not_overwritten(self, adapter, outcome):
+        async def handle(event):
+            await adapter.on_processing_start(event)
+            adapter._note_delivery_attempt(event.source.chat_id, event.metadata)
+            await adapter.on_processing_complete(event, outcome)
+
+        adapter.handle_message = handle
+        await self.dispatch(adapter, stream_event())
+        assert not adapter._audit_turns
+        assert emojis(adapter, "reactions_added") == [
+            "eyes", "check_mark" if outcome is SUCCESS else "warning"
+        ]
+        assert adapter._queue_controller._reaction_starts == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("clear", [True, False])
+    @pytest.mark.parametrize("complete", [True, False])
+    async def test_unarmed_command_finishes_with_or_without_run_end(
+        self, adapter, monkeypatch, clear, complete
+    ):
+        monkeypatch.setattr("zulip.inbound_queue.REACTION_START_GRACE_SECONDS", 0.01)
+        adapter._reaction_cfg.clear_on_finish = clear
+        event = stream_event()
+        event.text = "/status"
+
+        async def handle(event):
+            if complete:
+                await adapter.on_processing_complete(event, SUCCESS)
+
+        adapter.handle_message = handle
+        await asyncio.wait_for(self.dispatch(adapter, event), timeout=1)
+        assert emojis(adapter, "reactions_added") == ["eyes", "check_mark"]
+        assert emojis(adapter, "reactions_removed") == (["eyes"] if clear else [])
+        assert adapter._queue_controller._reaction_starts == {}
+
+    @pytest.mark.asyncio
+    async def test_unarmed_command_cannot_claim_another_runs_latch(self, adapter, monkeypatch):
+        monkeypatch.setattr("zulip.inbound_queue.REACTION_START_GRACE_SECONDS", 0.01)
+        run = stream_event(message_id=101)
+        adapter.handle_message = AsyncMock(side_effect=adapter.on_processing_start)
+        await self.dispatch(adapter, run)
+        adapter.handle_message = AsyncMock()
+        await self.dispatch(adapter, stream_event(message_id=102))
+
+        assert adapter.client.reactions_added == [
+            {"message_id": "101", "emoji_name": "eyes"},
+            {"message_id": "102", "emoji_name": "eyes"},
+            {"message_id": "102", "emoji_name": "check_mark"},
+        ]
+        adapter._note_delivery_attempt(run.source.chat_id, run.metadata)
+        await adapter.on_processing_complete(run, SUCCESS)
+        assert adapter.client.reactions_added[-1] == {
+            "message_id": "101", "emoji_name": "check_mark"
+        }
+
+    @pytest.mark.asyncio
+    async def test_dispatch_error_finishes_and_releases_the_latch(self, adapter):
+        adapter.handle_message = AsyncMock(side_effect=RuntimeError("dispatch failed"))
+        with pytest.raises(RuntimeError, match="dispatch failed"):
+            await self.dispatch(adapter, stream_event())
+        assert emojis(adapter, "reactions_added") == ["eyes", "warning"]
+        assert adapter._queue_controller._reaction_starts == {}
+
+    @pytest.mark.asyncio
+    async def test_hook_beyond_grace_cannot_leave_fallback_success_after_error(
+        self, adapter, monkeypatch
+    ):
+        from zulip import reactions as reaction_module
+
+        monkeypatch.setattr("zulip.inbound_queue.REACTION_START_GRACE_SECONDS", 0.01)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        add = reaction_module.add_reaction
+
+        async def delayed_add(client, message_id, emoji, *args, **kwargs):
+            if emoji == "check_mark":
+                entered.set()
+                await release.wait()
+            await add(client, message_id, emoji, *args, **kwargs)
+
+        monkeypatch.setattr(reaction_module, "add_reaction", delayed_add)
+        adapter.handle_message = AsyncMock()
+        event = stream_event()
+        dispatch = asyncio.create_task(self.dispatch(adapter, event))
+        complete = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            # The grace expired, but the fallback SDK call is still in flight.
+            await adapter.on_processing_start(event)
+            complete = asyncio.create_task(adapter.on_processing_complete(event, FAILURE))
+            await asyncio.sleep(0)
+            assert not complete.done()
+            release.set()
+            await asyncio.gather(dispatch, complete)
+            assert emojis(adapter, "reactions_added") == ["eyes", "check_mark", "warning"]
+            assert "check_mark" in emojis(adapter, "reactions_removed")
+            assert adapter._queue_controller._reaction_starts == {}
+        finally:
+            release.set()
+            dispatch.cancel()
+            if complete is not None:
+                complete.cancel()
+            await asyncio.gather(
+                dispatch, *([complete] if complete is not None else []),
+                return_exceptions=True,
+            )

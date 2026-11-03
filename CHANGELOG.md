@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Success reactions wait for the reply.** The start reaction stays visible until an armed run ends with a delivered reply; failed, cancelled and empty runs receive the error reaction without first flashing success. Queued turns follow the same lifecycle. Turns without a run-start hook retain a dispatch acknowledgement after a 100 ms grace period, while plugin command and policy short-circuits finish their reactions directly. Typing behaviour is unchanged.
 - Retain the host multiplex credential alias, triggering message ids and DM policy ordering when upgrading the downstream integration.
 - Restore content-only native tool progress edits with bounded failure handling and outbound credential/reasoning hygiene. Assistant streaming stays disabled. See `docs/HERMES-V113-MIGRATION.md` for the disposition of the downstream patches.
 
