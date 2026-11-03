@@ -983,6 +983,10 @@ class ZulipAdapter(BasePlatformAdapter):
         # One key, shared with the delivery path and the end-of-run check: the
         # conversation id when the host set one, the topic name otherwise (#272).
         self._audit_turns[_work_item_key(event)] = False
+        # Synchronous with arming, before any audit I/O: dispatch must know
+        # this event will be accounted for at run end even if that run finishes
+        # (and pops the audit entry) before handle_message returns.
+        self._queue_controller.reaction_run_started(event)
         await self._audit_logger.log_dispatch_turn(
             chat_id=chat_id,
             topic=_metadata_topic(metadata),
@@ -1023,8 +1027,8 @@ class ZulipAdapter(BasePlatformAdapter):
 
         Returns whether the run delivered anything: ``True``/``False`` for a
         dispatched work item, ``None`` when the gateway never dispatched it (a
-        native slash command the host answers itself). ``None`` is what tells
-        ``_report_run_end`` there is no ✅ to correct and no turn to account for.
+        native slash command the host answers itself). For ``None``,
+        ``_report_run_end`` leaves reaction completion to the dispatch fallback.
 
         Only reached when ``on_processing_start`` armed this work item, and the
         arming entry is popped here — once per work item, which is what keeps a
@@ -1043,28 +1047,33 @@ class ZulipAdapter(BasePlatformAdapter):
     async def _report_run_end(
         self, event: Any, delivered: Optional[bool], outcome: Any
     ) -> None:
-        """Correct the reaction; empty/refused turns remain audit-only."""
+        """Finish reactions after delivery; empty/refused turns remain audit-only."""
         if delivered is None:
             return
         status = getattr(outcome, "value", outcome)
         failed = status in ("failure", "cancelled")
-        if delivered and not failed:
-            return  # an answered run: today's ✅ stands, nothing to add
         chat_id, metadata = _event_route(event)
         if not chat_id:
             return
-        await self._place_error_reaction(event)
+        async with self._queue_controller.reaction_finish(event):
+            if delivered and not failed:
+                await self._place_run_reaction(event, failed=False)
+            else:
+                await self._place_error_reaction(event)
         if not delivered:
             logger.info("zulip run ended without a reply [status=%s]; audit only", status)
 
     async def _place_error_reaction(self, event: Any) -> None:
-        """Take back the dispatch ✅ and mark the run as failed.
+        """Mark a failed/empty run, correcting any dispatch fallback marker."""
+        await self._place_run_reaction(event, failed=True)
+
+    async def _place_run_reaction(self, event: Any, *, failed: bool) -> None:
+        """Finish the run with the configured success or error reaction.
 
         The lifecycle is the same one ``_dispatch_turn`` uses, so
         ``clear_on_finish`` and the configured ``on_error`` emoji keep their
         meaning. A reaction that cannot be placed is logged and dropped: this
-        runs on a work item that is already failing, so it must not raise into
-        the gateway loop.
+        must not raise into the gateway loop or prevent the queue from draining.
         """
         message_id = getattr(event, "message_id", None)
         if not message_id:
@@ -1072,8 +1081,8 @@ class ZulipAdapter(BasePlatformAdapter):
         try:
             # Imported here rather than at module scope: ``adapter`` deliberately
             # does not re-export ReactionLifecycle (see
-            # tests/test_wave11_composition_root.py::DELETED_SHIMS), and this is
-            # the only path in the adapter that needs it.
+            # tests/test_wave11_composition_root.py::DELETED_SHIMS). Run-end
+            # reaction placement is the only adapter path needing it.
             from .reactions import ReactionLifecycle
 
             reactions = ReactionLifecycle(
@@ -1082,13 +1091,15 @@ class ZulipAdapter(BasePlatformAdapter):
                 self._reaction_cfg,
                 timeout=self._send_timeout,
             )
-            # ``replacing_success``: ✅ is on the message already, because
-            # ``_dispatch_turn`` places it on a clean dispatch return. Leaving it
-            # would show ✅ and ⚠️ together and still read as finished (#219).
-            await reactions.error(replacing_success=True)
+            if failed:
+                # Usually no success was placed. Removal is harmless then,
+                # and still corrects a start hook later than the dispatch grace.
+                await reactions.error(replacing_success=True)
+            else:
+                await reactions.success()
         except Exception as e:
             logger.warning(
-                "zulip error reaction failed (dropped) [msg=%s]: %s",
+                "zulip run-end reaction failed (dropped) [msg=%s]: %s",
                 mask_pii(str(message_id)),
                 mask_pii(str(e)),
             )

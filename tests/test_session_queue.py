@@ -236,9 +236,14 @@ class TestMidRunMessages:
 
 class TestWaitingMarker:
     @pytest.mark.asyncio
-    async def test_waiting_message_shows_hourglass_which_dispatch_removes(self, adapter):
+    @pytest.mark.parametrize("clear", [True, False])
+    @pytest.mark.parametrize("delivered", [True, False])
+    async def test_waiting_message_shows_hourglass_which_dispatch_removes(
+        self, adapter, clear, delivered
+    ):
+        adapter._reaction_cfg.clear_on_finish = clear
+        adapter.handle_message.side_effect = adapter.on_processing_start
         first = await deliver(adapter, stream_message(1))
-        await adapter.on_processing_start(first)
         await adapter._handle_message(stream_message(2))
 
         assert reactions_of(adapter.client, "add_reaction", "2", "hourglass"), (
@@ -251,9 +256,18 @@ class TestWaitingMarker:
         assert reactions_of(adapter.client, "remove_reaction", "2", "hourglass"), (
             "dispatch must clear the waiting marker"
         )
-        assert reactions_of(adapter.client, "add_reaction", "2", "check_mark"), (
-            "dispatch leaves the normal finished marker behind"
-        )
+        assert not reactions_of(adapter.client, "add_reaction", "2", "check_mark")
+        assert not reactions_of(adapter.client, "remove_reaction", "2", "eyes")
+
+        second = adapter.handle_message.call_args[0][0]
+        if delivered:
+            adapter._note_delivery_attempt(second.source.chat_id, second.metadata)
+        await adapter.on_processing_complete(second, SUCCESS)
+        expected = "check_mark" if delivered else "warning"
+        assert reactions_of(adapter.client, "add_reaction", "2", expected)
+        assert bool(reactions_of(adapter.client, "remove_reaction", "2", "eyes")) is clear
+        if not delivered:
+            assert not reactions_of(adapter.client, "add_reaction", "2", "check_mark")
 
     @pytest.mark.asyncio
     async def test_a_dispatched_on_arrival_message_never_shows_the_hourglass(self, adapter):

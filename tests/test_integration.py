@@ -111,6 +111,9 @@ class TestFullFlow:
         })
         adapter.handle_message.assert_awaited_once()
         assert adapter.client.calls["send_message"] == []
+        assert [r["emoji_name"] for r in adapter.client.calls["add_reaction"]] == [
+            "eyes", "check_mark"
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("command", ["/help", "/streams"])
@@ -124,6 +127,37 @@ class TestFullFlow:
         })
         adapter.handle_message.assert_not_awaited()
         assert adapter.client.calls["send_message"] == []
+        assert [r["emoji_name"] for r in adapter.client.calls["add_reaction"]] == [
+            "eyes", "check_mark"
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["/streams", "/user", "/pin", "/unpin"])
+    async def test_plugin_command_finishes_reactions_without_a_run(self, adapter, command):
+        await adapter._handle_message({
+            "id": 46, "type": "stream", "stream_id": 1, "subject": "test",
+            "display_recipient": "example", "content": command,
+            "sender_email": "user@example.test", "sender_id": 99,
+        })
+        adapter.handle_message.assert_not_awaited()
+        assert len(adapter.client.calls["send_message"]) == 1
+        assert [r["emoji_name"] for r in adapter.client.calls["add_reaction"]] == [
+            "eyes", "check_mark"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_refused_approval_finishes_reactions_without_a_run(self, adapter):
+        adapter.gate_approval_decision = AsyncMock(return_value=False)
+        await adapter._handle_message({
+            "id": 47, "type": "stream", "stream_id": 1, "subject": "test",
+            "display_recipient": "example", "content": "/approve",
+            "sender_email": "user@example.test", "sender_id": 99,
+        })
+        adapter.gate_approval_decision.assert_awaited_once()
+        adapter.handle_message.assert_not_awaited()
+        assert [r["emoji_name"] for r in adapter.client.calls["add_reaction"]] == [
+            "eyes", "check_mark"
+        ]
 
     @pytest.mark.asyncio
     async def test_chunking_send(self, adapter, monkeypatch):
