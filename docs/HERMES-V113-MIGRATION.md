@@ -99,3 +99,23 @@ Le serveur refuse HTTP 400 si le champ historique `notification_settings_null`
 est absent dès qu'un objet `client_capabilities` est fourni ; son TypedDict
 `zerver.lib.events.ClientCapabilities` le déclare obligatoire, contrairement
 aux autres capacités optionnelles. Le probe inclut donc les deux champs.
+
+## Passage à 1.15.2 — 4 novembre 2026
+
+Base : tag `v1.15.2` (`030ea3a`). Les cinq commits du fork sur `v1.13.0` sont repris tels quels,
+dans le même ordre, sur la branche `hermes/v1.15` :
+
+| Commit sur 1.13 | Report sur 1.15.2 |
+| --- | --- |
+| `2263eac` | Repris. Seul conflit : la politique DM reste placée avant les commandes du plugin (l'amont la garde après) ; le `channel_context` ajouté par l'amont est conservé. |
+| `ceb5895` | Repris sans changement (documentation). |
+| `a43fc41` | Repris. Les tours vides ou refusés restent dans l'audit (`deliver_empty`) : 1.15.2 publie encore la ligne « run ended without a reply », sans réglage pour la couper. |
+| `2ff426e` | Repris sans changement. |
+| `b011d50` | Repris ; les réactions de fin de tour passent par `reaction_finish`, comme sur 1.13. |
+
+`CHANGELOG.md` est celui de l'amont, et `checksums.txt` est recalculé sur le code reporté.
+L'outil de mise à jour (`update.sh`, `zulip/updater.py`) suit les tags de l'amont : ne pas
+l'utiliser sur ce checkout, car il retirerait ces correctifs. On met à jour en reportant les
+commits sur le nouveau tag, comme ici.
+
+Retour arrière : `git checkout hermes/v1.13` dans le dossier de l'extension, puis redémarrer les gateways un par un.

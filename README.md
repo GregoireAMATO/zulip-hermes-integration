@@ -786,6 +786,7 @@ stay true.
 - **[docs/PARITY.md](docs/PARITY.md)** — how this adapter's behaviour stays level with the OpenClaw sibling, and the matrix behind it
 - **[SUPPORT.md](SUPPORT.md)** — where to ask for help
 - **[docs/RELEASING.md](docs/RELEASING.md)** — release procedure
+- **[docs/HERMES-V113-MIGRATION.md](docs/HERMES-V113-MIGRATION.md)** — fork notes: local patches carried over each upstream release
 - **[CHANGELOG.md](CHANGELOG.md)** — release history
 - **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — the community standard
 
