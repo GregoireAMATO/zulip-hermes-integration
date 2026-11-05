@@ -176,3 +176,18 @@ def mock_platform_config():
         }
 
     return FakeConfig()
+
+
+@pytest.fixture(autouse=True)
+def _no_host_command_catalog(monkeypatch):
+    """Command completion off by default under test.
+
+    Building the real catalog asks the installed host for its plugin commands,
+    which loads the host's plugins into the test process. Tests that exercise
+    completion install their own catalog; the real-host check runs in a
+    subprocess (tests/test_command_completion.py).
+    """
+    from zulip import commands as _commands
+
+    monkeypatch.setattr(_commands, "command_catalog", lambda: None)
+
