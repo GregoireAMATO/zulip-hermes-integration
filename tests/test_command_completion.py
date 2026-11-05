@@ -99,6 +99,8 @@ assert {"help", "model", "reasoning"} <= names, names
 for name in host.GATEWAY_KNOWN_COMMANDS:
     assert commands.complete_command("/" + name, catalog) is None, name
 assert catalog.entries[0].name == "help", catalog.entries[0]
+assert "start" not in names and "start" in catalog.known
+assert commands.complete_command("/stat", catalog).content == "/status"
 print("ok")
 """
 
