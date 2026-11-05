@@ -554,6 +554,19 @@ async def handle_message(adapter: Any, message: dict) -> None:
             cmd_chat_id = _private_chat_id(message)
             cmd_topic = None
 
+        # Command completion (the Telegram menu, for clients without one): a bare
+        # "/" gets the menu, a unique prefix becomes the full command, an
+        # ambiguous prefix or a near miss gets the candidates. Names the host
+        # knows pass untouched -- see ``commands.complete_command``.
+        completion = commands.complete_command(content, commands.command_catalog())
+        if completion is not None and completion.kind == "rewrite":
+            logger.info(
+                "zulip command completed [to=%s sender=%s]",
+                completion.content.split(maxsplit=1)[0],
+                mask_pii(sender_email),
+            )
+            content = completion.content
+
         # /pick-model (#192): the plugin's own picker command. Handled here rather
         # than in the sync command registry because it needs async I/O — a
         # provider listing and a widget send — which a ``-> str`` handler cannot
@@ -580,7 +593,9 @@ async def handle_message(adapter: Any, message: dict) -> None:
             if adapter._routing._conversations is not None and msg_type == "stream"
             else ""
         )
-        if topic_cmd == "/continue" or topic_cmd.startswith("/continue "):
+        if completion is not None and completion.kind == "reply":
+            cmd_result = CommandResult(handled=True, reply=completion.reply)
+        elif topic_cmd == "/continue" or topic_cmd.startswith("/continue "):
             cmd_result = CommandResult(
                 handled=True,
                 reply=adapter._continue_command_reply(
