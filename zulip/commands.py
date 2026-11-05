@@ -310,6 +310,11 @@ _PLUGIN_EXTRA_COMMANDS: dict[str, str] = {
     "unlisten": "Stop following this topic without a mention",
 }
 
+# Known to the host (so never completed into something else) but not worth a
+# menu line: ``/start`` only acknowledges Telegram's start ping, and listing it
+# makes ``/sta`` ambiguous with ``/status``.
+_MENU_HIDDEN: frozenset[str] = frozenset({"start"})
+
 COMPLETION_MENU_SIZE = 25
 COMPLETION_LIST_SIZE = 20
 _DESC_LIMIT = 70
@@ -412,6 +417,9 @@ def build_command_catalog(platform: str = "zulip") -> CommandCatalog | None:
         key = _norm_command(name)
         known.add(key)
         by_name.setdefault(key, CommandEntry(key, ""))
+
+    for name in _MENU_HIDDEN:
+        by_name.pop(name, None)
 
     rank = {name: i for i, name in enumerate(priority)}
     ordered = sorted(
